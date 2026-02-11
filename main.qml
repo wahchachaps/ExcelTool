@@ -108,6 +108,50 @@ Window {  // Changed from Rectangle to Window for top-level display
         }
     }
 
+    // Custom error dialog for Glacier (not implemented)
+    Popup {
+        id: glacierErrorDialog
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        anchors.centerIn: parent  // Centers the popup in the window
+        width: 300 * scaleFactor  // Set popup width to match content
+        height: 150 * scaleFactor  // Set popup height to match content
+
+        Rectangle {
+            anchors.fill: parent  // Fill the popup
+            color: "white"
+            border.color: "black"
+            border.width: 1
+            radius: 5
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 20 * scaleFactor
+                spacing: 10 * scaleFactor
+
+                Text {
+                    text: "Glacier Not Implemented"
+                    font.bold: true
+                    font.pixelSize: 16 * scaleFactor
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
+                Text {
+                    text: "Glacier XML processing is not implemented yet.\nPlease select Den or Globe."
+                    font.pixelSize: 12 * scaleFactor
+                    Layout.alignment: Qt.AlignHCenter
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Button {
+                    text: "OK"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: glacierErrorDialog.close()
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20 * scaleFactor  // Scale margins
@@ -296,7 +340,13 @@ Window {  // Changed from Rectangle to Window for top-level display
                 currentIndex: -1  // No selection initially
                 displayText: currentIndex === -1 ? "Select XML type" : currentText  // Show placeholder when no selection
                 onCurrentTextChanged: {
-                    if (currentIndex >= 0 && currentText !== selectionType) {  // Only update if a valid option is selected
+                    if (currentText === "Glacier") {
+                        // Show error dialog for Glacier and reset combo box
+                        glacierErrorDialog.open()
+                        typeComboBox.currentIndex = -1
+                        selectionType = ""
+                    } else if (currentIndex >= 0 && currentText !== selectionType) {
+                        // Only update if a valid option is selected
                         backend.setSelectionType(currentText);
                     }
                 }
@@ -388,7 +438,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 35 * scaleFactor  // Reduced height
-                color: selectionType !== "" ? "#4f46e5" : "#cccccc"  // Indigo when enabled, gray when disabled
+                color: (selectionType !== "" && selectionType !== "Glacier") ? "#4f46e5" : "#cccccc"  // Indigo when enabled (not Glacier), gray when disabled
                 radius: 5
                 border.color: "#4f46e5"
                 border.width: 1
@@ -403,7 +453,7 @@ Window {  // Changed from Rectangle to Window for top-level display
 
                 MouseArea {
                     anchors.fill: parent
-                    enabled: selectionType !== ""
+                    enabled: selectionType !== "" && selectionType !== "Glacier"  // Disable for Glacier
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onClicked: backend.confirmAndConvert()  // Connect to Python
                 }
@@ -434,7 +484,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             }
         }
 
-        // Converting State
+            // Converting State
         ColumnLayout {
             visible: processState === "converting"
             spacing: 20 * scaleFactor  // Scale spacing
@@ -497,7 +547,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             }
         }
 
-            // Complete State
+        // Complete State
         ColumnLayout {
             visible: processState === "complete"
             spacing: 20 * scaleFactor  // Scale spacing
