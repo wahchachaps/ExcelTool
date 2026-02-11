@@ -55,6 +55,8 @@ class Worker(QObject):
         except Exception as e:
             self.error.emit(f"An unexpected error occurred: {e}")
 
+
+#Den header format
     def process_den(self, xlsx_file):
         try:
             try:
@@ -124,6 +126,7 @@ class Worker(QObject):
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in Den processing: {e}")
 
+#Globe header format
     def process_globe(self, xlsx_file):
         try:
             try:
@@ -137,7 +140,8 @@ class Worker(QObject):
 
             df = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
 
-            raw_globe_headers = ["", "", "", "", "", "", "1-1:1.29.0 [Wh]", "1-1:2.8.0 [Wh]", "1-1:2.29.0 [Wh]", "1-1:3.8.0 [varh]",
+            raw_globe_headers = ["0-0:1.0.0", "0-0:96.240.12 [hex]", "1-1:1.5.0 [kW]", "", "1-1:1.8.0 [Wh]",
+                                  "", "1-1:1.29.0 [Wh]", "1-1:2.8.0 [Wh]", "1-1:2.29.0 [Wh]", "1-1:3.8.0 [varh]",
                                  "", "1-1:3.29.0 [varh]", "1-1:4.8.0 [varh]", "1-1:4.29.0 [varh]", "1-1:13.5.0"]
             friendly_globe_headers = ["Clock", "EDIS status", "Last average demand +A (QI+QIV)", "",
                                       "Active energy import +A (QI+QIV)", "", "Energy delta over capture period 1 +A (QI+QIV)",
@@ -169,14 +173,14 @@ class Worker(QObject):
                 row[0] = col_a_data[i]
                 row[1] = col_b_data[i]
                 row[2] = col_c_data[i]
-                row[3] = f"=C{i+3}*280" if i > 0 else ""
+                row[3] = f"=C{i+3}*1400" if i > 0 else ""
                 row[4] = col_e_data[i]
-                row[5] = f"=(E{i+3}-E{i+2})*280/1000" if i > 0 else ""
+                row[5] = f"=(E{i+3}-E{i+2})*1400/1000" if i > 0 else ""
                 row[6] = col_g_data[i]
                 row[7] = col_h_data[i]
                 row[8] = col_i_data[i]
                 row[9] = col_j_data[i]
-                row[10] = f"=(J{i+3}-J{i+2})*280/1000" if i > 0 else ""
+                row[10] = f"=(J{i+3}-J{i+2})*1400/1000" if i > 0 else ""
                 row[11] = col_l_data[i]
                 row[12] = col_m_data[i]
                 row[13] = col_n_data[i]
@@ -281,7 +285,7 @@ class Backend(QObject):
     @pyqtSlot(str)
     def setSelectedFile(self, file_path):
         self.selected_file = file_path
-        
+
     def updateProgressInQML(self, value):
         if self.root:
             self.root.setProperty("progress", value)
@@ -321,41 +325,84 @@ class Backend(QObject):
                 text_fmt = workbook.add_format({'num_format': '@', 'border': 1, 'align': 'right'})
                 num_fmt = workbook.add_format({'num_format': '0.00', 'border': 1, 'align': 'right'})
                 header_fmt = workbook.add_format({
-                    'bg_color': '#99CC00', 'font_color': 'white',
+                    'num_format': '@', 'bg_color': '#99CC00', 'font_color': 'white',
                     'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1
                 })
                 if xml_type == "Globe":
+                    # Header formats
                     colored_fmt = workbook.add_format({'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
                     colored_header_fmt = workbook.add_format({
-                        'bg_color': '#B4C6E7', 'font_color': 'white',
+                        'num_format': '@', 'bg_color': '#B4C6E7', 'font_color': 'white',
                         'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1
                     })
+                    # Colored number format for data cells under D,F,K
+                    colored_num_fmt = workbook.add_format({
+                        'num_format': '0.00', 
+                        'bg_color': '#B4C6E7', 
+                        'border': 1, 
+                        'align': 'right'
+                    })
+
 
                 # Write headers with appropriate formats
                 for r in range(2):
                     for c in range(df.shape[1]):
                         val = df.iloc[r, c]
-                        if xml_type == "Globe" and c in [3, 5, 10]:  # Columns D, F, K
+                        if xml_type == "Globe" and c in [3, 5, 10]:  # Columns D, F, K (Globe-specific colored headers, now also Text)
                             ws.write(r, c, val, colored_header_fmt)
-                        else:
+                        else:  # All other headers: Use standard header format (now Text)
                             ws.write(r, c, val, header_fmt)
 
                 for r in range(2, len(df)):
                     for c in range(df.shape[1]):
                         val = df.iloc[r, c]
-                        if xml_type == "Globe" and c in [3, 5, 10]:  # Columns D, F, K
-                            ws.write(r, c, val, colored_fmt)
-                        elif c in [0, 1]:
-                            ws.write(r, c, val, general_fmt)
-                        elif c in [2, 3, 5, 8]:
-                            ws.write(r, c, val, text_fmt)
-                        else:
-                            ws.write(r, c, val, num_fmt)
+                        if xml_type == "Globe":
+                            if c in [3, 5, 10]:  # Columns D, F, K → colored number
+                                ws.write(r, c, val, colored_num_fmt)
+                            elif 3 <= c <= 14:  # Columns D-O except D/F/K → regular number
+                                if c not in [3,5,10]:
+                                    ws.write(r, c, val, num_fmt)
+                            elif c == 0:  # Column A: General
+                                ws.write(r, c, val, general_fmt)
+                            elif c == 1:  # Column B: Text
+                                ws.write(r, c, val, text_fmt)
+                            else:  # Other columns if any
+                                ws.write(r, c, val, num_fmt)
 
-                # Adjust column widths based on the maximum length in the entire column (headers and data)
-                for c in range(df.shape[1]):
-                    max_len = max(len(str(df.iloc[r, c])) for r in range(len(df)))
-                    ws.set_column(c, c, max_len + 5)
+
+
+               # ===== Column width rules =====
+                if xml_type == "Globe":
+                    # Set column widths for Globe
+                    for c in range(0,1): # A
+                        ws.set_column(c, c, 17.73)
+                    for c in range(1,2):  # B
+                        ws.set_column(c, c, 17.27)
+                    for c in range(2, 11):  # D-K
+                        ws.set_column(c, c, 14.91)
+                    for c in range(11,12):  # L
+                        ws.set_column(c, c, 41.91)
+                    for c in range(12,13):  # M
+                        ws.set_column(c, c, 33.27)
+                    for c in range(13,14):  # N
+                        ws.set_column(c, c, 43.36)                    
+                    for c in range(14,15):  # O
+                        ws.set_column(c, c, 23.36)
+
+                    # Hide columns G-I (Globe only)
+                    for c in range(6, 9):  # G to I
+                        ws.set_column(c, c, None, None, {'hidden': True})       
+
+                else:  # Den
+                    for c in range(df.shape[1]):
+                        max_len = max(len(str(df.iloc[r, c])) for r in range(len(df)))
+                        if c == 0:
+                            ws.set_column(c, c, 18)
+                        elif c == 1:
+                            ws.set_column(c, c, max_len + 5, text_fmt)
+                        else:
+                            ws.set_column(c, c, max_len + 5)
+
         except Exception as e:
             QMessageBox.critical(None, "Error", f"Failed to save Excel: {e}")
             if self.root:
