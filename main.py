@@ -162,15 +162,40 @@ class Worker(QObject):
             df = pd.read_excel(xlsx_file, header=None, engine="openpyxl")
             df = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
 
-            # Example headers, replace with your Glacier logic
-            header_glacier_1 = ["Header1", "Header2", "Header3"]
-            header_glacier_2 = ["Clock", "Data1", "Data2"]
+            header_glacier_1 = ["0-0:1.0.0", "0-0:96.240.12 [hex]", "1-1:1.5.0 [kW]", "",
+                            "1-1:1.8.0 [Wh]", "", "1-1:2.8.0 [Wh]", "1-1:3.8.0 [varh]", "",
+                            "1-1:4.8.0 [varh]", "1-1:15.8.1 [Wh]", "1-1:13.5.0", "1-1:128.8.0 [Wh]"]
+            header_glacier_2 = ["Clock", "EDIS status", "Last average demand +A (QI+QIV)", "",
+                            "Active energy import +A (QI+QIV)", "", "Active energy export -A (QII+QIII)",
+                            "Reactive energy import +R (QI+QII)", "", "Reactive energy export -R (QIII+QIV)",
+                            "Active energy A (QI+QII+QIII+QIV) rate 1", "Last average power factor",
+                            "Energy |AL1|+|AL2|+|AL3|"]
+
+            # Columns indices
+            col_den_ad, col_den_t, col_den_v, col_den_w, col_den_x, col_den_y, col_den_z, col_den_aa, col_den_ab, col_den_ac, col_den_u = 29, 19, 21, 22, 23, 24, 25, 26, 27, 28, 20
+            df_filtered = df[df.iloc[:, col_den_ad].notna()].reset_index(drop=True)
 
             data_glacier_rows = []
-            for i in range(len(df)):
-                row = [df.iloc[i, 0], df.iloc[i, 1] if df.shape[1]>1 else "", df.iloc[i, 2] if df.shape[1]>2 else ""]
+            total_rows = len(df_filtered)
+            for i in range(total_rows):
+                row = [""] * 13
+                row[0] = df_filtered.iloc[i, col_den_t]
+                row[1] = df_filtered.iloc[i, col_den_v]
+                row[2] = df_filtered.iloc[i, col_den_w]
+                row[3] = f"=C{i+3}*280" if i > 0 else ""
+                row[4] = df_filtered.iloc[i, col_den_x]
+                row[5] = f"=(E{i+3}-E{i+2})*280/1000" if i > 0 else ""
+                row[6] = df_filtered.iloc[i, col_den_y]
+                row[7] = df_filtered.iloc[i, col_den_z]
+                row[8] = f"=(H{i+3}-H{i+2})*280/1000" if i > 0 else ""
+                row[9] = df_filtered.iloc[i, col_den_aa]
+                row[10] = df_filtered.iloc[i, col_den_ab]
+                row[11] = df_filtered.iloc[i, col_den_ac]
+                row[12] = df_filtered.iloc[i, col_den_u]
                 data_glacier_rows.append(row)
-                self.progress.emit(50 + int((i / len(df)) * 40))
+                progress_value = 50 + int((i / total_rows) * 40)
+                self.progress.emit(progress_value)
+
 
             final_df = pd.DataFrame([header_glacier_1, header_glacier_2] + data_glacier_rows)
 
@@ -222,8 +247,6 @@ class Backend(QObject):
     @pyqtSlot(str)
     def setSelectionType(self, type_str):
         self.xml_type = type_str
-        if type_str == "Glacier":
-            QMessageBox.information(None, "Glacier", "Glacier XML processing not implemented yet!")
         # Removed message for Globe since it's now implemented
         if self.root:
             self.root.setProperty("selectionType", type_str)
@@ -315,15 +338,18 @@ class Backend(QObject):
                     'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1
                 })
 
-                if xml_type == "Globe":
-                    colored_fmt = workbook.add_format({'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
+                # Define colored formats for types that use them
+                if xml_type in ["Globe", "Den", "Glacier"]:
+                    colored_num_fmt = workbook.add_format({
+                        'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'
+                    })
                     colored_header_fmt = workbook.add_format({
                         'num_format': '@', 'bg_color': '#B4C6E7', 'font_color': 'white',
                         'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1
                     })
-                    colored_num_fmt = workbook.add_format({
-                        'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'
-                    })
+
+                if xml_type == "Globe":
+                    colored_fmt = workbook.add_format({'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
 
                 # ===== Write headers =====
                 for r in range(2):  # Rows 0 and 1 → headers
@@ -331,10 +357,12 @@ class Backend(QObject):
                         val = df.iloc[r, c]
                         if xml_type == "Globe" and c in [3, 5, 10]:
                             ws.write(r, c, val, colored_header_fmt)
+                        elif xml_type in ["Den", "Glacier"] and c in [3, 5, 8]:
+                            ws.write(r, c, val, colored_header_fmt)
                         else:
                             ws.write(r, c, val, header_fmt)
 
-                # ===== Write data starting from row 3 =====
+                # ===== Write data starting from row 2 =====
                 for r in range(2, len(df)):
                     for c in range(df.shape[1]):
                         val = df.iloc[r, c]
@@ -361,14 +389,23 @@ class Backend(QObject):
                             else:
                                 ws.write(r, c, val, num_fmt)
                         else:  # Glacier default
-                            ws.write(r, c, val, general_fmt)
+                            if c in [3, 5, 8]:
+                                ws.write(r, c, val, colored_num_fmt)
+                            elif 3 <= c <= 12 and c not in [3, 5, 8]:  # Adjusted for Glacier's 13 columns
+                                ws.write(r, c, val, num_fmt)
+                            elif c == 0:
+                                ws.write(r, c, val, general_fmt)
+                            elif c == 1:
+                                ws.write(r, c, val, text_fmt)
+                            else:
+                                ws.write(r, c, val, num_fmt)
 
                 # ===== Column widths =====
                 if xml_type == "Den":
                     widths = [17.73, 17.27] + [16.27]*7 + [32.27, 36.36, 23.36, 24.76]
                     for i, w in enumerate(widths):
                         ws.set_column(i, i, w)
-                    ws.set_column(6, 6, 16.27, num_fmt, options={'hidden': True}) #Hides G
+                    ws.set_column(6, 6, options={'hidden': True})  # Hide column G
 
                 elif xml_type == "Globe":
                     ws.set_column(0, 0, 17.73)
@@ -378,11 +415,17 @@ class Backend(QObject):
                     ws.set_column(12, 12, 33.27)
                     ws.set_column(13, 13, 43.36)
                     ws.set_column(14, 14, 23.36)
-                    ws.set_column(6, 8, None, None, {'hidden': True})  # Hide G-I
+                    ws.set_column(6, 8, options={'hidden': True})  # Hide G-I
 
                 elif xml_type == "Glacier":
-                    for c in range(df.shape[1]):
-                        ws.set_column(c, c, 17)
+                    ws.set_column(0, 0, 17.73)
+                    ws.set_column(1, 1, 17.27)
+                    ws.set_column(2, 8, 16.91)
+                    ws.set_column(9, 9, 18.73)
+                    ws.set_column(10, 10, 17.55)
+                    ws.set_column(11, 11, 23.36)
+                    ws.set_column(12, 12, 23.36)  # Assuming for consistency
+                    ws.set_column(6, 6, options={'hidden': True})  # Hide column G
 
         except Exception as e:
             QMessageBox.critical(None, "Error", f"Failed to save Excel: {e}")
@@ -398,7 +441,6 @@ class Backend(QObject):
         QMessageBox.information(None, "Done", f"Processed Excel saved:\n{save_path}")
         self.thread.quit()
         self.thread.wait()
-
 
     def resetProperties(self):
         if self.root:
