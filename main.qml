@@ -13,10 +13,10 @@ import QtMultimedia
 
 Window {  // Changed from Rectangle to Window for top-level display
     visible: true  // Ensure it's visible
-    width: processState === "selecting" ? 600 : 600  // Auto-expand width on file selection
-    height: processState === "selecting" ? 700 : 600  // Auto-expand height on file selection
-    minimumWidth: 500  // Prevent shrinking below this
-    minimumHeight: 600  // Prevent shrinking below this
+    width: 400  // Default width; user can resize
+    height: 500  // Default height; user can resize
+    minimumWidth: 400  // Prevent shrinking below this
+    minimumHeight: 500  // Prevent shrinking below this
     title: "ExcelTool"  // Added title for the window
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint  // Added MaximizeButtonHint for resizing
     onProcessStateChanged: requestActivate()  // Bring window to front when state changes
@@ -26,6 +26,9 @@ Window {  // Changed from Rectangle to Window for top-level display
     property string selectionType: ""
     property int progress: 0
     property string fileSize: ""  // Added: For displaying actual file size
+
+    // Scaling factor based on window size for proportional resizing
+    property real scaleFactor: Math.min(width / 400, height / 500)  // Base on 400x500; adjust as needed
 
     onSelectionTypeChanged: {
         var idx = typeComboBox.model.indexOf(selectionType);
@@ -63,18 +66,18 @@ Window {  // Changed from Rectangle to Window for top-level display
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 20
-        spacing: 20
+        anchors.margins: 20 * scaleFactor  // Scale margins
+        spacing: 20 * scaleFactor  // Scale spacing
 
         // Header
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 10
+            spacing: 10 * scaleFactor  // Scale spacing
 
             AnimatedImage {
                 id: copywriting
-                Layout.preferredWidth: 234
-                Layout.preferredHeight: 134
+                Layout.preferredWidth: 200 * scaleFactor  // Reduced width for smaller size
+                Layout.preferredHeight: 110 * scaleFactor  // Reduced height for smaller size
                 source: "images/copywriting.gif"
                 speed: 0.4724
                 fillMode: Image.PreserveAspectFit
@@ -83,16 +86,15 @@ Window {  // Changed from Rectangle to Window for top-level display
 
             Text {
                 text: qsTr("ExcelTool")
-                font.styleName: "Bold"
                 font.family: "Tahoma"
-                font.pointSize: 38
+                font.pixelSize: 32 * scaleFactor  // Reduced font size for smaller title
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 color: "#e6000000"
                 text: "Convert your XML files with ease"
-                font.pixelSize: 20
+                font.pixelSize: 16 * scaleFactor  // Reduced font size for smaller subtitle
                 font.family: "Verdana"
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -100,7 +102,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             Text {
                 color: "#bd000000"
                 text: "by wahchachaps"
-                font.pixelSize: 15
+                font.pixelSize: 12 * scaleFactor  // Reduced font size for smaller credits
                 font.family: "Verdana"
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -109,7 +111,7 @@ Window {  // Changed from Rectangle to Window for top-level display
         // Idle State: Styled File Selection (Inspired by React Code)
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 200
+            Layout.preferredHeight: 200 * scaleFactor  // Scale height
             color: "#f0f0f0"
             border.color: "#cccccc"
             border.width: 2
@@ -135,18 +137,18 @@ Window {  // Changed from Rectangle to Window for top-level display
 
             ColumnLayout {
                 anchors.centerIn: parent
-                spacing: 10
+                spacing: 10 * scaleFactor  // Scale spacing
 
                 // Upload Icon (simulates React's Upload icon from lucide-react)
                 Rectangle {
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 48 * scaleFactor  // Scale width
+                    Layout.preferredHeight: 48 * scaleFactor  // Scale height
                     color: "transparent"
                     Layout.alignment: Qt.AlignHCenter
 
                     Text {
                         text: "⬆"  // Simple upload arrow icon (replace with Image if you have an icon file)
-                        font.pixelSize: 48
+                        font.pixelSize: 48 * scaleFactor  // Scale font size
                         color: "#9ca3af"  // Gray color
                         anchors.centerIn: parent
                     }
@@ -154,14 +156,14 @@ Window {  // Changed from Rectangle to Window for top-level display
 
                 Text {
                     text: "Click to select XML file"
-                    font.pixelSize: 16
+                    font.pixelSize: 16 * scaleFactor  // Scale font size
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
                 }
 
                 Text {
                     text: "XML files only"
-                    font.pixelSize: 12
+                    font.pixelSize: 12 * scaleFactor  // Scale font size
                     color: "#666666"
                     Layout.alignment: Qt.AlignHCenter
                 }
@@ -171,11 +173,11 @@ Window {  // Changed from Rectangle to Window for top-level display
         // Selecting State: File Info and Type Selection
         ColumnLayout {
             visible: processState === "selecting"
-            spacing: 20
+            spacing: 5 * scaleFactor  // Reduced spacing to fit contents better within fixed window size
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 80
+                Layout.preferredHeight: 60 * scaleFactor  // Reduced height to fit better
                 color: "#f9f9f9"
                 border.color: "#dddddd"
                 border.width: 1
@@ -184,13 +186,13 @@ Window {  // Changed from Rectangle to Window for top-level display
                 Text {
                     anchors.centerIn: parent
                     text: "File: " + (selectedFile ? selectedFile.split('/').pop() : "") + "\nSize: " + fileSize  // Updated: Use actual fileSize
-                    font.pixelSize: 14
+                    font.pixelSize: 12 * scaleFactor  // Reduced font size to fit
                 }
             }
 
             Text {
                 text: "Select Conversion Type"
-                font.pixelSize: 16
+                font.pixelSize: 14 * scaleFactor  // Reduced font size
                 font.bold: true
             }
 
@@ -198,7 +200,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             ComboBox {
                 id: typeComboBox
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
                 model: ["Den", "Glacier", "Globe"]  // Only actual options in model
                 currentIndex: -1  // No selection initially
                 displayText: currentIndex === -1 ? "Select XML type" : currentText  // Show placeholder when no selection
@@ -219,7 +221,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                 // Content item styling
                 contentItem: Text {
                     text: typeComboBox.displayText  // Use displayText to show placeholder or selected text
-                    font.pixelSize: 14
+                    font.pixelSize: 12 * scaleFactor  // Reduced font size
                     color: typeComboBox.currentIndex === -1 ? "#999999" : "#333333"  // Gray for placeholder, black for selected
                     verticalAlignment: Text.AlignVCenter
                     leftPadding: 15
@@ -231,7 +233,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                     width: typeComboBox.width
                     contentItem: Text {
                         text: modelData
-                        font.pixelSize: 14
+                        font.pixelSize: 12 * scaleFactor  // Reduced font size
                         color: "#333333"
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 15
@@ -248,8 +250,8 @@ Window {  // Changed from Rectangle to Window for top-level display
                     id: canvas
                     x: typeComboBox.width - width - typeComboBox.rightPadding
                     y: typeComboBox.topPadding + (typeComboBox.availableHeight - height) / 2
-                    width: 12
-                    height: 8
+                    width: 10 * scaleFactor  // Reduced width
+                    height: 6 * scaleFactor  // Reduced height
                     contextType: "2d"
 
                     Connections {
@@ -294,7 +296,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             // Custom "Confirm and Convert" Button (Rectangle + Text + MouseArea)
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
                 color: selectionType !== "" ? "#4f46e5" : "#cccccc"  // Indigo when enabled, gray when disabled
                 radius: 5
                 border.color: "#4f46e5"
@@ -304,7 +306,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                     anchors.centerIn: parent
                     text: "Confirm and Convert"
                     color: "white"
-                    font.pixelSize: 14
+                    font.pixelSize: 12 * scaleFactor  // Reduced font size
                     font.bold: true
                 }
 
@@ -319,7 +321,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             // Custom "Select Different File" Button (Rectangle + Text + MouseArea)
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
                 color: "#f3f4f6"  // Light gray background
                 radius: 5
                 border.color: "#d1d5db"
@@ -329,7 +331,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                     anchors.centerIn: parent
                     text: "Select Different File"
                     color: "#374151"  // Dark gray text
-                    font.pixelSize: 14
+                    font.pixelSize: 12 * scaleFactor  // Reduced font size
                     font.bold: true
                 }
 
@@ -341,28 +343,28 @@ Window {  // Changed from Rectangle to Window for top-level display
             }
         }
 
-                // Converting State
+        // Converting State
         ColumnLayout {
             visible: processState === "converting"
-            spacing: 20
+            spacing: 20 * scaleFactor  // Scale spacing
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Converting File"
-                font.pixelSize: 24
+                font.pixelSize: 24 * scaleFactor  // Scale font size
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Please wait while we process your XML file..."
-                font.pixelSize: 14
+                font.pixelSize: 14 * scaleFactor  // Scale font size
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Using " + selectionType + " conversion"
-                font.pixelSize: 12
+                font.pixelSize: 12 * scaleFactor  // Scale font size
                 color: "#666666"
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -370,8 +372,8 @@ Window {  // Changed from Rectangle to Window for top-level display
             BusyIndicator {
                 Layout.alignment: Qt.AlignHCenter
                 running: true
-                implicitWidth: 64
-                implicitHeight: 64
+                implicitWidth: 64 * scaleFactor  // Scale size
+                implicitHeight: 64 * scaleFactor  // Scale size
                 Material.accent: "#4f46e5"  // Added: Matches button color
             }
         }
@@ -379,81 +381,54 @@ Window {  // Changed from Rectangle to Window for top-level display
         // Creating State
         ColumnLayout {
             visible: processState === "creating"
-            spacing: 20
+            spacing: 20 * scaleFactor  // Scale spacing
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Creating New Excel File"
-                font.pixelSize: 24
+                font.pixelSize: 24 * scaleFactor  // Scale font size
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Almost done, generating your output file..."
-                font.pixelSize: 14
+                font.pixelSize: 14 * scaleFactor  // Scale font size
                 Layout.alignment: Qt.AlignHCenter
             }
 
             BusyIndicator {
                 Layout.alignment: Qt.AlignHCenter
                 running: true
-                implicitWidth: 64
-                implicitHeight: 64
+                implicitWidth: 64 * scaleFactor  // Scale size
+                implicitHeight: 64 * scaleFactor  // Scale size
                 Material.accent: "#4f46e5"  // Added: Matches button color
-            }
-        }
-
-        // Creating State
-        ColumnLayout {
-            visible: processState === "creating"
-            spacing: 20
-            Layout.alignment: Qt.AlignHCenter
-
-            Text {
-                text: "Creating New Excel File"
-                font.pixelSize: 24
-                font.bold: true
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Text {
-                text: "Almost done, generating your output file..."
-                font.pixelSize: 14
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            BusyIndicator {
-                Layout.alignment: Qt.AlignHCenter
-                running: true
-                implicitWidth: 64
-                implicitHeight: 64
             }
         }
 
         // Complete State
         ColumnLayout {
             visible: processState === "complete"
-            spacing: 20
+            spacing: 20 * scaleFactor  // Scale spacing
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Conversion Complete!"
-                font.pixelSize: 24
+                font.pixelSize: 24 * scaleFactor  // Scale font size
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Your file has been successfully converted using " + selectionType
-                font.pixelSize: 14
+                font.pixelSize: 14 * scaleFactor  // Scale font size
                 Layout.alignment: Qt.AlignHCenter
             }
 
             // Custom "Convert Another File" Button (Rectangle + Text + MouseArea)
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: 40 * scaleFactor  // Scale height
                 color: "#4f46e5"  // Indigo background
                 radius: 5
                 border.color: "#4f46e5"
@@ -463,7 +438,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                     anchors.centerIn: parent
                     text: "Convert Another File"
                     color: "white"
-                    font.pixelSize: 14
+                    font.pixelSize: 14 * scaleFactor  // Scale font size
                     font.bold: true
                 }
 
