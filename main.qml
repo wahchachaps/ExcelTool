@@ -64,6 +64,50 @@ Window {  // Changed from Rectangle to Window for top-level display
         }
     }
 
+    // Custom error dialog for invalid file types (centered and properly sized)
+    Popup {
+        id: errorDialog
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        anchors.centerIn: parent  // Centers the popup in the window
+        width: 300 * scaleFactor  // Set popup width to match content
+        height: 150 * scaleFactor  // Set popup height to match content
+
+        Rectangle {
+            anchors.fill: parent  // Fill the popup
+            color: "white"
+            border.color: "black"
+            border.width: 1
+            radius: 5
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 20 * scaleFactor
+                spacing: 10 * scaleFactor
+
+                Text {
+                    text: "Invalid File Type"
+                    font.bold: true
+                    font.pixelSize: 16 * scaleFactor
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
+                Text {
+                    text: "Only XML files are supported.\nPlease select a valid XML file."
+                    font.pixelSize: 12 * scaleFactor
+                    Layout.alignment: Qt.AlignHCenter
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Button {
+                    text: "OK"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: errorDialog.close()
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20 * scaleFactor  // Scale margins
@@ -113,8 +157,8 @@ Window {  // Changed from Rectangle to Window for top-level display
             Layout.fillWidth: true
             Layout.preferredHeight: 200 * scaleFactor  // Scale height
             color: "#f0f0f0"
-            border.color: "#cccccc"
-            border.width: 2
+            border.color: dropArea.containsDrag ? "#4f46e5" : "#cccccc"  // Change border to indigo when dragging
+            border.width: dropArea.containsDrag ? 3 : 2  // Thicker border when dragging
             radius: 10
             visible: processState === "idle"
 
@@ -122,40 +166,87 @@ Window {  // Changed from Rectangle to Window for top-level display
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: backend.selectFile()  // Triggers Python file dialog
+                onClicked: {
+                    backend.selectFile()  // Triggers Python file dialog
+                    selectionType = ""  // Reset combo box to default
+                    typeComboBox.currentIndex = -1  // Explicitly reset combo box to default
+                }
             }
 
-            // Hover effect (changes border and background on hover, like React)
+            // DropArea for drag-and-drop support (single, complete block)
+            DropArea {
+                id: dropArea
+                anchors.fill: parent
+                keys: ["text/uri-list"]  // Accept file drops
+
+                onEntered: {
+                    // Optional: Provide additional feedback when entering the drop zone
+                    console.log("Drag entered drop zone")
+                }
+
+                onExited: {
+                    // Optional: Reset feedback when exiting
+                    console.log("Drag exited drop zone")
+                }
+
+                onDropped: function(drop) {  // Explicitly declare the 'drop' parameter to fix the deprecation warning
+                    if (drop.hasUrls) {
+                        var fileUrl = drop.urls[0]  // Take the first dropped file
+                        var filePath = fileUrl.toString().replace("file:///", "")  // Convert URL to local path (Windows-specific)
+                        
+                        // Validate: Check if it's an XML file
+                        if (filePath.toLowerCase().endsWith(".xml")) {
+                            selectedFile = filePath  // Set the selected file
+                            backend.setSelectedFile(filePath)  // Update Python's selected_file
+                            selectionType = ""  // Reset combo box to default
+                            typeComboBox.currentIndex = -1  // Explicitly reset combo box to default
+                            processState = "selecting"  // Transition to selecting state
+                            
+                            // Get formatted file size directly from Python (no re-calculation needed)
+                            fileSize = backend.getFileSize(filePath)
+                        } else {
+                            // Show error dialog for invalid file types
+                            errorDialog.open()
+                        }
+                    }
+                }
+            }
+
+            // Hover effect (enhanced for drop zone)
             Rectangle {
                 anchors.fill: parent
-                color: parent.hovered ? "#e0e7ff" : "transparent"  // Light blue on hover
-                border.color: parent.hovered ? "#4f46e5" : "#cccccc"  // Indigo border on hover
-                border.width: 2
+                color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")  // Light blue for drag, original for hover
+                border.color: dropArea.containsDrag ? "#4f46e5" : (parent.hovered ? "#4f46e5" : "#cccccc")  // Indigo for drag/hover
+                border.width: dropArea.containsDrag ? 3 : (parent.hovered ? 2 : 2)
                 radius: 10
-                opacity: 0.5  // Subtle overlay
+                opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)  // Higher opacity for drag
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+                Behavior on color { ColorAnimation { duration: 200 } }
+                Behavior on border.width { NumberAnimation { duration: 200 } }
             }
 
             ColumnLayout {
                 anchors.centerIn: parent
                 spacing: 10 * scaleFactor  // Scale spacing
 
-                // Upload Icon (simulates React's Upload icon from lucide-react)
+                // Upload Icon (replaced Text with Image)
                 Rectangle {
                     Layout.preferredWidth: 48 * scaleFactor  // Scale width
                     Layout.preferredHeight: 48 * scaleFactor  // Scale height
                     color: "transparent"
                     Layout.alignment: Qt.AlignHCenter
 
-                    Text {
-                        text: "⬆"  // Simple upload arrow icon (replace with Image if you have an icon file)
-                        font.pixelSize: 48 * scaleFactor  // Scale font size
-                        color: "#9ca3af"  // Gray color
+                    Image {
+                        source: "images/upload.png"  // Path to the upload icon image
+                        fillMode: Image.PreserveAspectFit  // Maintain aspect ratio
+                        width: parent.width
+                        height: parent.height
                         anchors.centerIn: parent
                     }
                 }
 
                 Text {
-                    text: "Click to select XML file"
+                    text: dropArea.containsDrag ? "Drop XML file here" : "Click to select XML file"  // Dynamic text for drag feedback
                     font.pixelSize: 16 * scaleFactor  // Scale font size
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -406,7 +497,7 @@ Window {  // Changed from Rectangle to Window for top-level display
             }
         }
 
-        // Complete State
+            // Complete State
         ColumnLayout {
             visible: processState === "complete"
             spacing: 20 * scaleFactor  // Scale spacing

@@ -263,10 +263,25 @@ class Backend(QObject):
     def selectDifferentFile(self):
         self.resetProperties()
 
+    @pyqtSlot(str, result=str)  # New slot for file size calculation (used by QML on drop)
+    def getFileSize(self, file_path):
+        try:
+            size_bytes = os.path.getsize(file_path)
+            if size_bytes < 1024 * 1024:
+                return f"{size_bytes / 1024:.2f} KB"
+            else:
+                return f"{size_bytes / (1024 * 1024):.2f} MB"
+        except OSError:
+            return "Unknown"        
+
     @pyqtSlot()
     def convertAnotherFile(self):
         self.resetProperties()
 
+    @pyqtSlot(str)
+    def setSelectedFile(self, file_path):
+        self.selected_file = file_path
+        
     def updateProgressInQML(self, value):
         if self.root:
             self.root.setProperty("progress", value)
@@ -361,7 +376,7 @@ class Backend(QObject):
             self.root.setProperty("processState", "idle")
             self.root.setProperty("selectedFile", "")
             self.root.setProperty("selectionType", "")
-            self.root.setProperty("fileSize", "")  # Reset file size
+            self.root.setProperty("fileSize", "")
             self.root.setProperty("progress", 0)
         self.selected_file = None
         self.xml_type = ""
