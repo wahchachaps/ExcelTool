@@ -19,194 +19,258 @@ class Worker(QObject):
     @pyqtSlot()
     def process(self):
         try:
+            xml_file = self.xml_file
+
             if self.xml_type not in ["Den", "Globe", "Glacier"]:
                 self.error.emit("Only Den, Glacier, and Globe are implemented.")
                 return
 
-            xml_file = self.xml_file
-            excel = None
-            xlsx_file = None
+            # --------- Use pandas.read_xml instead of Excel conversion ---------
             try:
-                excel = win32.DispatchEx('Excel.Application')
-                excel.Visible = False
-                wb = excel.Workbooks.Open(os.path.abspath(xml_file))
-                xlsx_file = os.path.splitext(xml_file)[0] + "_temp.xlsx"
-                wb.SaveAs(os.path.abspath(xlsx_file), FileFormat=51)
-                wb.Close(False)
+                df_xml = pd.read_xml(
+                    xml_file,
+                    xpath=".//ns:Items",
+                    namespaces={"ns": "http://tempuri.org/ArrayFieldDataSet.xsd"}
+                )
             except Exception as e:
-                self.error.emit(f"Error converting XML: {e}")
+                self.error.emit(f"Error reading XML directly: {e}")
                 return
-            finally:
-                try:
-                    excel.Quit()
-                except:
-                    pass
 
             self.progress.emit(50)
 
-            # Call the specific processing method based on xml_type
+            # Call existing processing methods, but pass df directly
             if self.xml_type == "Den":
-                self.process_den(xlsx_file)
+                self.process_den_from_df(df_xml)
             elif self.xml_type == "Globe":
-                self.process_globe(xlsx_file)
+                self.process_globe_from_df(df_xml)
             elif self.xml_type == "Glacier":
-                self.process_glacier(xlsx_file)
+                self.process_glacier_from_df(df_xml)
+
         except Exception as e:
             self.error.emit(f"An unexpected error occurred: {e}")
 
+
     # -------------------- Den --------------------
-    def process_den(self, xlsx_file):
+    def process_den_from_df(self, df):
         try:
-            df = pd.read_excel(xlsx_file, header=None, engine="openpyxl")
-            df = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            # Filter out irrelevant rows
+            df_filtered = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
 
-            header_den_1 = ["0-0:1.0.0", "0-0:96.240.12 [hex]", "1-1:1.5.0 [kW]", "",
-                            "1-1:1.8.0 [Wh]", "", "1-1:2.8.0 [Wh]", "1-1:3.8.0 [varh]", "",
-                            "1-1:4.8.0 [varh]", "1-1:15.8.1 [Wh]", "1-1:13.5.0", "1-1:128.8.0 [Wh]"]
-            header_den_2 = ["Clock", "EDIS status", "Last average demand +A (QI+QIV)", "",
-                            "Active energy import +A (QI+QIV)", "", "Active energy export -A (QII+QIII)",
-                            "Reactive energy import +R (QI+QII)", "", "Reactive energy export -R (QIII+QIV)",
-                            "Active energy A (QI+QII+QIII+QIV) rate 1", "Last average power factor",
-                            "Energy |AL1|+|AL2|+|AL3|"]
+            if df_filtered.empty:
+                self.error.emit("No valid rows found in Den XML.")
+                return
 
-            # Columns indices
-            col_den_ad, col_den_t, col_den_v, col_den_w, col_den_x, col_den_y, col_den_z, col_den_aa, col_den_ab, col_den_ac, col_den_u = 29, 19, 21, 22, 23, 24, 25, 26, 27, 28, 20
-            df_filtered = df[df.iloc[:, col_den_ad].notna()].reset_index(drop=True)
+            # Take only columns C2-C10 (original columns 1-9)
+            df_data = df_filtered.iloc[:, 1:12]  #df_data columns 0-8 = C2-C10
 
-            data_den_rows = []
-            total_rows = len(df_filtered)
-            for i in range(total_rows):
-                row = [""] * 13
-                row[0] = df_filtered.iloc[i, col_den_t]
-                row[1] = df_filtered.iloc[i, col_den_v]
-                row[2] = df_filtered.iloc[i, col_den_w]
-                row[3] = f"=C{i+3}*280" if i > 0 else ""
-                row[4] = df_filtered.iloc[i, col_den_x]
-                row[5] = f"=(E{i+3}-E{i+2})*280/1000" if i > 0 else ""
-                row[6] = df_filtered.iloc[i, col_den_y]
-                row[7] = df_filtered.iloc[i, col_den_z]
-                row[8] = f"=(H{i+3}-H{i+2})*280/1000" if i > 0 else ""
-                row[9] = df_filtered.iloc[i, col_den_aa]
-                row[10] = df_filtered.iloc[i, col_den_ab]
-                row[11] = df_filtered.iloc[i, col_den_ac]
-                row[12] = df_filtered.iloc[i, col_den_u]
-                data_den_rows.append(row)
-                progress_value = 50 + int((i / total_rows) * 40)
-                self.progress.emit(progress_value)
 
-            final_df = pd.DataFrame([header_den_1, header_den_2] + data_den_rows)
+            # Define column mapping: df_data index → Excel column index
+            column_mapping = {
+                0: 0,  # C1 → A
+                1: 1,  # C2 → B
+                2: 2,  # C3 → C
+                3: 4,  # C4 → E
+                4: 6,  # C5 → G
+                5: 7,  # C6 → H
+                6: 9,  # C7 → J
+                7: 10, # C8 → K
+                8: 11,  # C9 → L   
+                9: 12   # C10 → M                      
+            }
 
-            if xlsx_file and os.path.exists(xlsx_file):
-                os.remove(xlsx_file)
+            # Create an empty final DataFrame with enough columns
+            max_col = max(column_mapping.values()) + 1
+            final_rows = []
+
+            # Add headers
+            header_den_row_1 = [""] * max_col
+            header_den_row_2 = [""] * max_col
+
+            header_den_map_1 = {
+                0: "0-0:1.0.0", 1: "0-0:96.240.12 [hex]", 2: "1-1:1.5.0 [kW]",
+                4: "1-1:1.8.0 [Wh]", 6: "1-1:2.8.0 [Wh]", 7: "1-1:3.8.0 [varh]",
+                9: "1-1:4.8.0 [varh]", 10: "1-1:15.8.1 [Wh]", 11: "1-1:13.5.0", 12: "1-1:128.8.0 [Wh]"
+            }
+
+            header_den_map_2 = {
+                0: "Clock", 1: "EDIS status", 2: "Last average demand +A (QI+QIV)",
+                4: "Active energy import +A (QI+QIV)", 6: "Active energy export -A (QII+QIII)",
+                7: "Reactive energy import +R (QI+QII)", 9: "Reactive energy export -R (QIII+QIV)",
+                10: "Active energy A (QI+QII+QIII+QIV) rate 1", 11: "Last average power factor",
+                12: "Energy |AL1|+|AL2|+|AL3|"
+            }
+
+            for idx, val in header_den_map_1.items():
+                header_den_row_1[idx] = val
+            for idx, val in header_den_map_2.items():
+                header_den_row_2[idx] = val
+
+            final_rows = [header_den_row_1,header_den_row_2]
+
+            for i in range(len(df_data)):
+                row = [""] * max_col  # max_col = highest Excel column index you will use + 1
+
+                # Fill data according to your mapping
+                for idx, col in column_mapping.items():
+                    row[col] = df_data.iloc[i, idx]
+
+                # Add formulas
+                if i > 0:
+                    row[3] = f"=C{i+3}*280"          # Column D
+                    row[5] = f"=(E{i+3}-E{i+2})*280/1000"  # Column F
+                    row[8] = f"=(H{i+3}-H{i+2})*280/1000"  # Column I
+
+                final_rows.append(row)
+
+            final_df = pd.DataFrame(final_rows)
+
 
             self.progress.emit(90)
             self.dataReady.emit(final_df, self.xml_type)
+
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in Den processing: {e}")
 
     # -------------------- Globe --------------------
-    def process_globe(self, xlsx_file):
+    def process_globe_from_df(self, df):
         try:
-            df = pd.read_excel(xlsx_file, header=None, engine="openpyxl")
-            df = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            df_filtered = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
 
-            header_globe_1 = ["0-0:1.0.0", "0-0:96.240.12 [hex]", "1-1:1.5.0 [kW]", "", "1-1:1.8.0 [Wh]",
-                              "", "1-1:1.29.0 [Wh]", "1-1:2.8.0 [Wh]", "1-1:2.29.0 [Wh]", "1-1:3.8.0 [varh]",
-                              "", "1-1:3.29.0 [varh]", "1-1:4.8.0 [varh]", "1-1:4.29.0 [varh]", "1-1:13.5.0"]
-            header_globe_2 = ["Clock", "EDIS status", "Last average demand +A (QI+QIV)", "",
-                              "Active energy import +A (QI+QIV)", "", "Energy delta over capture period 1 +A (QI+QIV)",
-                              "Active energy export -A (QII+QIII)", "Energy delta over capture period 1 -A (QII+QIII)",
-                              "Reactive energy import +R (QI+QII)", "", "Energy delta over capture period 1 +R (QI+QII)",
-                              "Reactive energy export -R (QIII+QIV)", "Energy delta over capture period 1 -R (QIII+QIV)",
-                              "Last average power factor"]
+            if df_filtered.empty:
+                self.error.emit("No valid rows found in Globe XML.")
+                return
 
-            # Indices
-            col_globe_af, col_globe_t, col_globe_x, col_globe_y, col_globe_z, col_globe_aa, col_globe_ab, col_globe_ac, col_globe_ad, col_globe_ae, col_globe_u, col_globe_v, col_globe_w = 31, 19, 23, 24, 25, 26, 27, 28, 29, 30, 20, 21, 22
-            df_filtered = df[df.iloc[:, col_globe_af].notna()].reset_index(drop=True)
+            df_data = df_filtered.iloc[:, 1:14]
 
-            data_globe_rows = []
-            total_rows = len(df_filtered)
+            column_mapping = {
+                0: 0,   
+                1: 1,   
+                2: 2, 
+                3: 4, 
+                4: 6,  
+                5: 7,  
+                6: 8,  
+                7: 9, 
+                8: 11,  
+                9: 12, 
+                10: 13,  
+                11: 14, 
+            }
+            max_col = max(column_mapping.values()) + 1
+
+            header_globe_row_1 = [""] * max_col
+            header_globe_row_2 = [""] * max_col
+
+            header_map_1 = {
+                0: "0-0:1.0.0", 1: "0-0:96.240.12 [hex]", 2: "1-1:1.5.0 [kW]",
+                4: "1-1:1.8.0 [Wh]", 6: "1-1:1.29.0 [Wh]", 7: "1-1:2.8.0 [Wh]",
+                8: "1-1:2.29.0 [Wh]", 9: "1-1:3.8.0 [varh]", 11: "1-1:3.29.0 [varh]",
+                12: "1-1:4.8.0 [varh]",13: "1-1:4.29.0 [varh]", 14: "1-1:13.5.0" }
+
+            header_map_2 = {
+                0: "Clock", 1: "EDIS status", 2: "Last average demand +A (QI+QIV)", 
+                4: "Active energy import +A (QI+QIV)", 6: "Energy delta over capture period 1 +A (QI+QIV)",
+                7: "Active energy export -A (QII+QIII)", 8: "Energy delta over capture period 1 -A (QII+QIII)",
+                9: "Reactive energy import +R (QI+QII)", 11: "Energy delta over capture period 1 +R (QI+QII)",
+                12: "Reactive energy export -R (QIII+QIV)", 13: "Energy delta over capture period 1 -R (QIII+QIV)",
+                14: "Last average power factor"
+            }
+            for idx, val in header_map_1.items():
+                header_globe_row_1[idx] = val
+            for idx, val in header_map_2.items():
+                header_globe_row_2[idx] = val
+
+            final_rows = [header_globe_row_1, header_globe_row_2]
+
+            total_rows = len(df_data)
             for i in range(total_rows):
-                row = [""] * 15
-                row[0] = df_filtered.iloc[i, col_globe_t]
-                row[1] = df_filtered.iloc[i, col_globe_x]
-                row[2] = df_filtered.iloc[i, col_globe_y]
-                row[3] = f"=C{i+3}*1400" if i > 0 else ""
-                row[4] = df_filtered.iloc[i, col_globe_z]
-                row[5] = f"=(E{i+3}-E{i+2})*1400/1000" if i > 0 else ""
-                row[6] = df_filtered.iloc[i, col_globe_aa]
-                row[7] = df_filtered.iloc[i, col_globe_ab]
-                row[8] = df_filtered.iloc[i, col_globe_ac]
-                row[9] = df_filtered.iloc[i, col_globe_ad]
-                row[10] = f"=(J{i+3}-J{i+2})*1400/1000" if i > 0 else ""
-                row[11] = df_filtered.iloc[i, col_globe_ae]
-                row[12] = df_filtered.iloc[i, col_globe_u]
-                row[13] = df_filtered.iloc[i, col_globe_v]
-                row[14] = df_filtered.iloc[i, col_globe_w]
-                data_globe_rows.append(row)
+                row = [""] * max_col
+                for idx, col in column_mapping.items():
+                    row[col] = df_data.iloc[i, idx]
+
+                if i > 0:
+                    row[3] = f"=C{i+3}*1400"      
+                    row[5] = f"=(E{i+3}-E{i+2})*1400/1000"  
+                    row[10] = f"=(J{i+3}-J{i+2})*1400/1000" 
+
+                final_rows.append(row)
                 progress_value = 50 + int((i / total_rows) * 40)
                 self.progress.emit(progress_value)
 
-            final_df = pd.DataFrame([header_globe_1, header_globe_2] + data_globe_rows)
-            if xlsx_file and os.path.exists(xlsx_file):
-                os.remove(xlsx_file)
+            final_df = pd.DataFrame(final_rows)
 
             self.progress.emit(90)
             self.dataReady.emit(final_df, self.xml_type)
+
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in Globe processing: {e}")
 
-    # -------------------- Glacier --------------------
-    def process_glacier(self, xlsx_file):
+
+# -------------------- Glacier --------------------
+    def process_glacier_from_df(self, df):
         try:
-            df = pd.read_excel(xlsx_file, header=None, engine="openpyxl")
-            df = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            df_filtered = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
 
-            header_glacier_1 = ["0-0:1.0.0", "0-0:96.240.12 [hex]", "1-1:1.5.0 [kW]", "",
-                            "1-1:1.8.0 [Wh]", "", "1-1:2.8.0 [Wh]", "1-1:3.8.0 [varh]", "",
-                            "1-1:4.8.0 [varh]", "1-1:15.8.1 [Wh]", "1-1:13.5.0", "1-1:128.8.0 [Wh]"]
-            header_glacier_2 = ["Clock", "EDIS status", "Last average demand +A (QI+QIV)", "",
-                            "Active energy import +A (QI+QIV)", "", "Active energy export -A (QII+QIII)",
-                            "Reactive energy import +R (QI+QII)", "", "Reactive energy export -R (QIII+QIV)",
-                            "Active energy A (QI+QII+QIII+QIV) rate 1", "Last average power factor",
-                            "Energy |AL1|+|AL2|+|AL3|"]
+            if df_filtered.empty:
+                self.error.emit("No valid rows found in Glacier XML.")
+                return
+            df_data = df_filtered.iloc[:, 1:12]
 
-            # Columns indices
-            col_den_ad, col_den_t, col_den_v, col_den_w, col_den_x, col_den_y, col_den_z, col_den_aa, col_den_ab, col_den_ac, col_den_u = 29, 19, 21, 22, 23, 24, 25, 26, 27, 28, 20
-            df_filtered = df[df.iloc[:, col_den_ad].notna()].reset_index(drop=True)
+            column_mapping = {
+                0: 0,  
+                1: 1,  
+                2: 2,  
+                3: 4, 
+                4: 6,  
+                5: 7,   
+                6: 9,  
+                7: 10, 
+                8: 11, 
+                9: 12 
+            }
+            max_col = max(column_mapping.values()) + 1
 
-            data_glacier_rows = []
-            total_rows = len(df_filtered)
-            for i in range(total_rows):
-                row = [""] * 13
-                row[0] = df_filtered.iloc[i, col_den_t]
-                row[1] = df_filtered.iloc[i, col_den_v]
-                row[2] = df_filtered.iloc[i, col_den_w]
-                row[3] = f"=C{i+3}*280" if i > 0 else ""
-                row[4] = df_filtered.iloc[i, col_den_x]
-                row[5] = f"=(E{i+3}-E{i+2})*280/1000" if i > 0 else ""
-                row[6] = df_filtered.iloc[i, col_den_y]
-                row[7] = df_filtered.iloc[i, col_den_z]
-                row[8] = f"=(H{i+3}-H{i+2})*280/1000" if i > 0 else ""
-                row[9] = df_filtered.iloc[i, col_den_aa]
-                row[10] = df_filtered.iloc[i, col_den_ab]
-                row[11] = df_filtered.iloc[i, col_den_ac]
-                row[12] = df_filtered.iloc[i, col_den_u]
-                data_glacier_rows.append(row)
-                progress_value = 50 + int((i / total_rows) * 40)
-                self.progress.emit(progress_value)
+            header_row_1 = [""] * max_col
+            header_row_2 = [""] * max_col
 
+            header_map_1 = {
+                0: "0-0:1.0.0", 1: "0-0:96.240.12 [hex]", 2: "1-1:1.5.0 [kW]",
+                4: "1-1:1.8.0 [Wh]", 6: "1-1:2.8.0 [Wh]", 7: "1-1:3.8.0 [varh]",
+                9: "1-1:4.8.0 [varh]", 10: "1-1:15.8.1 [Wh]", 11: "1-1:13.5.0", 12: "1-1:128.8.0 [Wh]"
+            }
+            header_map_2 = {
+                0: "Clock", 1: "EDIS status", 2: "Last average demand +A (QI+QIV)",
+                4: "Active energy import +A (QI+QIV)", 6: "Active energy export -A (QII+QIII)",
+                7: "Reactive energy import +R (QI+QII)", 9: "Reactive energy export -R (QIII+QIV)",
+                10: "Active energy A (QI+QII+QIII+QIV) rate 1", 11: "Last average power factor",
+                12: "Energy |AL1|+|AL2|+|AL3|"
+            }
+            for idx, val in header_map_1.items():
+                header_row_1[idx] = val
+            for idx, val in header_map_2.items():
+                header_row_2[idx] = val
 
-            final_df = pd.DataFrame([header_glacier_1, header_glacier_2] + data_glacier_rows)
+            final_rows = [header_row_1, header_row_2]
 
-            if xlsx_file and os.path.exists(xlsx_file):
-                os.remove(xlsx_file)
+            for i in range(len(df_data)):
+                row = [""] * max_col
+                for idx, col in column_mapping.items():
+                    row[col] = df_data.iloc[i, idx]
+
+                if i > 0:
+                    row[3] = f"=C{i+3}*280"              
+                    row[5] = f"=(E{i+3}-E{i+2})*280/1000"  
+                    row[8] = f"=(H{i+3}-H{i+2})*280/1000" 
+
+                final_rows.append(row)
+
+            final_df = pd.DataFrame(final_rows)
 
             self.progress.emit(90)
             self.dataReady.emit(final_df, self.xml_type)
+
         except Exception as e:
             self.error.emit(f"An unexpected error occurred in Glacier processing: {e}")
-
 
 class Backend(QObject):
     progressUpdated = pyqtSignal(int)
@@ -216,7 +280,7 @@ class Backend(QObject):
         self.engine = engine
         self.root = None
         self.selected_file = None
-        self.xml_type = ""  # Changed to "" to avoid triggering on init
+        self.xml_type = "" 
         self.progress = 0
         self.progressUpdated.connect(self.updateProgressInQML)
         self.thread = None
@@ -231,10 +295,10 @@ class Backend(QObject):
         self.selected_file = file_path
         if self.root:
             self.root.setProperty("selectedFile", file_path)
-            # Calculate and set actual file size
+
             try:
                 size_bytes = os.path.getsize(file_path)
-                # Format size: KB if < 1 MB, MB otherwise
+
                 if size_bytes < 1024 * 1024:
                     size_str = f"{size_bytes / 1024:.2f} KB"
                 else:
@@ -247,7 +311,6 @@ class Backend(QObject):
     @pyqtSlot(str)
     def setSelectionType(self, type_str):
         self.xml_type = type_str
-        # Removed message for Globe since it's now implemented
         if self.root:
             self.root.setProperty("selectionType", type_str)
 
@@ -259,7 +322,7 @@ class Backend(QObject):
             self.root.setProperty("processState", "converting")
         self.progress = 0
         self.progressUpdated.emit(self.progress)
-        # Start processing in a separate thread
+        
         self.thread = QThread()
         self.worker = Worker(self.selected_file, self.xml_type)
         self.worker.moveToThread(self.thread)
@@ -273,7 +336,7 @@ class Backend(QObject):
     def selectDifferentFile(self):
         self.resetProperties()
 
-    @pyqtSlot(str, result=str)  # New slot for file size calculation (used by QML on drop)
+    @pyqtSlot(str, result=str)
     def getFileSize(self, file_path):
         try:
             size_bytes = os.path.getsize(file_path)
@@ -305,6 +368,8 @@ class Backend(QObject):
 
     @pyqtSlot(object, str)
     def saveFile(self, df, xml_type):
+        df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
+
         dialog = QFileDialog()
         dialog.setWindowTitle("Save Excel File")
         dialog.setNameFilter("Excel Files (*.xlsx)")
@@ -325,9 +390,16 @@ class Backend(QObject):
 
         try:
             with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, header=False)
+                xml_file_name = os.path.splitext(os.path.basename(self.selected_file))[0]
+                parts = xml_file_name.split('_')
+                if '_' in xml_file_name:
+                    sheet_name = '_'.join(xml_file_name.split('_')[:-1])
+                else:
+                    sheet_name = xml_file_name
+                sheet_name = sheet_name[:31]
+                df.to_excel(writer, index=False, header=False, sheet_name=sheet_name)
                 workbook = writer.book
-                ws = writer.sheets['Sheet1']
+                ws = writer.sheets[sheet_name]
 
                 # ===== Formats =====
                 general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
@@ -339,7 +411,7 @@ class Backend(QObject):
                 })
 
                 # Define colored formats for types that use them
-                if xml_type in ["Globe", "Den", "Glacier"]:
+                if xml_type in ["Globe", "Glacier"]:
                     colored_num_fmt = workbook.add_format({
                         'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'
                     })
@@ -357,7 +429,7 @@ class Backend(QObject):
                         val = df.iloc[r, c]
                         if xml_type == "Globe" and c in [3, 5, 10]:
                             ws.write(r, c, val, colored_header_fmt)
-                        elif xml_type in ["Den", "Glacier"] and c in [3, 5, 8]:
+                        elif xml_type in ["Glacier"] and c in [3, 5, 8]:
                             ws.write(r, c, val, colored_header_fmt)
                         else:
                             ws.write(r, c, val, header_fmt)
@@ -405,7 +477,7 @@ class Backend(QObject):
                     widths = [17.73, 17.27] + [16.27]*7 + [32.27, 36.36, 23.36, 24.76]
                     for i, w in enumerate(widths):
                         ws.set_column(i, i, w)
-                    ws.set_column(6, 6, options={'hidden': True})  # Hide column G
+                    ws.set_column(6, 6, 16.27, None,{'hidden': True})
 
                 elif xml_type == "Globe":
                     ws.set_column(0, 0, 17.73)
@@ -415,7 +487,7 @@ class Backend(QObject):
                     ws.set_column(12, 12, 33.27)
                     ws.set_column(13, 13, 43.36)
                     ws.set_column(14, 14, 23.36)
-                    ws.set_column(6, 8, options={'hidden': True})  # Hide G-I
+                    ws.set_column(6, 8, 14.91, None, {'hidden': True})
 
                 elif xml_type == "Glacier":
                     ws.set_column(0, 0, 17.73)
@@ -424,8 +496,8 @@ class Backend(QObject):
                     ws.set_column(9, 9, 18.73)
                     ws.set_column(10, 10, 17.55)
                     ws.set_column(11, 11, 23.36)
-                    ws.set_column(12, 12, 23.36)  # Assuming for consistency
-                    ws.set_column(6, 6, options={'hidden': True})  # Hide column G
+                    ws.set_column(12, 12, 23.36) 
+                    ws.set_column(6, 6, 16.91, None, {'hidden': True}) 
 
         except Exception as e:
             QMessageBox.critical(None, "Error", f"Failed to save Excel: {e}")
