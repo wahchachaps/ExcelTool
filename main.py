@@ -50,7 +50,7 @@ class Worker(QObject):
             header_den_row_1 = [""]*max_col
             header_den_row_2 = [""]*max_col
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:2.8.0 [Wh]",7:"1-1:3.8.0 [varh]",9:"1-1:4.8.0 [varh]",10:"1-1:15.8.1 [Wh]",11:"1-1:13.5.0",12:"1-1:128.8.0 [Wh]"}.items(): header_den_row_1[idx]=val
-            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",4:"Active energy import +A (QI+QIV)",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_den_row_2[idx]=val
+            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",8:"kVarh",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_den_row_2[idx]=val
             final_rows = [header_den_row_1, header_den_row_2]
             for i in range(len(df_data)):
                 row = [""]*max_col
@@ -76,7 +76,7 @@ class Worker(QObject):
             header_globe_row_1 = [""]*max_col
             header_globe_row_2 = [""]*max_col
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:1.29.0 [Wh]",7:"1-1:2.8.0 [Wh]",8:"1-1:2.29.0 [Wh]",9:"1-1:3.8.0 [varh]",11:"1-1:3.29.0 [varh]",12:"1-1:4.8.0 [varh]",13:"1-1:4.29.0 [varh]",14:"1-1:13.5.0"}.items(): header_globe_row_1[idx]=val
-            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",4:"Active energy import +A (QI+QIV)",6:"Energy delta over capture period 1 +A (QI+QIV)",7:"Active energy export -A (QII+QIII)",8:"Energy delta over capture period 1 -A (QII+QIII)",9:"Reactive energy import +R (QI+QII)",11:"Energy delta over capture period 1 +R (QI+QII)",12:"Reactive energy export -R (QIII+QIV)",13:"Energy delta over capture period 1 -R (QIII+QIV)",14:"Last average power factor"}.items(): header_globe_row_2[idx]=val
+            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Energy delta over capture period 1 +A (QI+QIV)",7:"Active energy export -A (QII+QIII)",8:"Energy delta over capture period 1 -A (QII+QIII)",9:"Reactive energy import +R (QI+QII)",10:"kVarh",11:"Energy delta over capture period 1 +R (QI+QII)",12:"Reactive energy export -R (QIII+QIV)",13:"Energy delta over capture period 1 -R (QIII+QIV)",14:"Last average power factor"}.items(): header_globe_row_2[idx]=val
             final_rows = [header_globe_row_1, header_globe_row_2]
             total_rows = len(df_data)
             for i in range(total_rows):
@@ -103,7 +103,7 @@ class Worker(QObject):
             header_row_1 = [""]*max_col
             header_row_2 = [""]*max_col
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:2.8.0 [Wh]",7:"1-1:3.8.0 [varh]",9:"1-1:4.8.0 [varh]",10:"1-1:15.8.1 [Wh]",11:"1-1:13.5.0",12:"1-1:128.8.0 [Wh]"}.items(): header_row_1[idx]=val
-            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",4:"Active energy import +A (QI+QIV)",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_row_2[idx]=val
+            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",8:"kVarh",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_row_2[idx]=val
             final_rows = [header_row_1, header_row_2]
             for i in range(len(df_data)):
                 row = [""]*max_col
@@ -230,14 +230,16 @@ class Backend(QObject):
                 text_fmt=workbook.add_format({'num_format':'@','border':1,'align':'right'})
                 num_fmt=workbook.add_format({'num_format':'0.00','border':1,'align':'right'})
                 header_fmt=workbook.add_format({'num_format':'@','bg_color':'#99CC00','font_color':'white','align':'center','valign':'vcenter','left':1,'right':1})
-                colored_header_fmt=workbook.add_format({'num_format':'@','bg_color':'#B4C6E7','font_color':'white','align':'center','valign':'vcenter','left':1,'right':1})
-                colored_num_fmt=workbook.add_format({'num_format':'0.00','bg_color':'#B4C6E7','border':1,'align':'right'})
+                colored_header_fmt=workbook.add_format({'num_format':'@','bg_color':'#F2E6FF','font_color':'white','align':'center','valign':'vcenter','left':1,'right':1})
+                colored_num_fmt=workbook.add_format({'num_format':'0.00','bg_color':'#F2E6FF','border':1,'align':'right'})
+                black_header_fmt = workbook.add_format({'num_format':'@','bg_color':'#F2E6FF','font_color':'black','align':'center','valign':'vcenter','left':1,'right':1})
+
 
                 for r in range(2):
                     for c in range(df.shape[1]):
                         val=df.iloc[r,c]
-                        if xml_type=="Globe" and c in [3,5,10]: ws.write(r,c,val,colored_header_fmt)
-                        elif xml_type in ["Glacier","Den"] and c in [3,5,8]: ws.write(r,c,val,colored_header_fmt)
+                        if xml_type=="Globe" and c in [3,5,10]: ws.write(r,c,val,black_header_fmt)
+                        elif xml_type in ["Glacier","Den"] and c in [3,5,8]: ws.write(r,c,val,black_header_fmt)
                         else: ws.write(r,c,val,header_fmt)
 
                 for r in range(2,len(df)):
@@ -293,12 +295,20 @@ class Backend(QObject):
                                     else: ws.write(r,c,val,highlight_fmt)
                         except: continue
 
-                if xml_type=="Den": widths=[17.73,17.27]+[16.27]*7+[32.27,36.36,23.36,24.76]; hidden_cols=[6]
-                elif xml_type=="Globe": widths=[17.73,17.27]+[14.91]*9+[41.91,33.27,43.36,23.36]; hidden_cols=[6,7,8]
-                elif xml_type=="Glacier": widths=[17.73,17.27]+[16.91]*7+[18.73,17.55,23.36,23.36]; hidden_cols=[6]
-                for i,w in enumerate(widths[:df.shape[1]]): ws.set_column(i,i,w)
-                for col in hidden_cols:
-                    if col<df.shape[1]: ws.set_column(col,col,None,None,{'hidden':True})
+                if xml_type=="Den":
+                    widths=[17.73,17.27]+[16.27]*7+[32.27,36.36,23.36,24.76]
+                    hidden_cols={6:16.27}  
+                elif xml_type=="Globe":
+                    widths=[17.73,17.27]+[14.91]*9+[41.91,33.27,43.36,23.36]
+                    hidden_cols={6:14.91, 7:14.91, 8:14.91} 
+                elif xml_type=="Glacier":
+                    widths=[17.73,17.27]+[16.91]*7+[18.73,17.55,23.36,23.36]
+                    hidden_cols={6:16.91}
+                for i,w in enumerate(widths[:df.shape[1]]):ws.set_column(i,i,w)
+                for col, w in hidden_cols.items():
+                    if col < df.shape[1]: ws.set_column(col, col, w, None, {'hidden': True})
+
+
 
         except Exception as e:
             QMessageBox.critical(None,"Error",f"Failed to save Excel: {e}")
