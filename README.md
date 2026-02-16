@@ -1,18 +1,39 @@
 # ExcelTool
 
-A simple PyQt6-based tool to convert XML files to Excel format with a user-friendly GUI.
+Desktop XML-to-Excel converter built with PyQt6 and QML.
 
 ## Features
-- Select and convert XML files (Glacier type supported).
-- Progress tracking and file size display.
-- Styled UI with hover effects.
+- Convert XML files to formatted Excel (`.xlsx`)
+- Single-file and batch conversion (select one or multiple XML files)
+- Supported conversion types: `Den`, `Glacier`, `Globe`
+- Progress/status UI with selected file info (name and size)
+- Drag-and-drop support for single XML file
 
 ## Requirements
-- Python 3.x
-- Install dependencies: `pip install pyqt6 pandas pywin32 openpyxl xlsxwriter`
+- Python 3.10+ (recommended)
+- Windows (uses `pywin32`)
+
+Install dependencies:
+
+```bash
+pip install pyqt6 pandas pywin32 xlsxwriter
+```
+
+## Run
+
+```bash
+python main.py
+```
 
 ## Usage
-Run `python main.py` to start the app.
+1. Click the file selection area and choose one or more `.xml` files.
+2. Select conversion type (`Den`, `Glacier`, or `Globe`).
+3. Click **Confirm and Convert**.
+4. Choose the output `.xlsx` save path.
+
+## Project Structure
+- `main.py` - backend logic (selection, processing, save flow)
+- `main.qml` - frontend UI (states, controls, layout)
 
 ## Author
 wahchachaps
