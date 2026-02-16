@@ -2,7 +2,7 @@ import sys
 import os
 import pandas as pd
 import win32com.client as win32
-from PyQt6.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal, QThread, Qt
+from PyQt6.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal, QThread, Qt, QSettings
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 
@@ -396,10 +396,37 @@ class Backend(QObject):
         self.batch_results = []
         self.batch_outputs = []
         self.batch_file_statuses = []
+        self.settings = QSettings("ExcelTool", "ExcelTool")
+        self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
+        self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
+        self.last_batch_dir = str(self.settings.value("lastBatchDir", "", str))
+        self.xml_type = str(self.settings.value("lastXmlType", "", str))
 
     def refreshBatchFileStatusesProperty(self):
         if self.root:
             self.root.setProperty("batchFileStatuses", self.batch_file_statuses)
+
+    def applyRememberedSettingsToUI(self):
+        if not self.root:
+            return
+        if self.xml_type:
+            self.root.setProperty("selectionType", self.xml_type)
+
+    def rememberOpenDirectory(self, file_path):
+        directory = os.path.dirname(file_path) if file_path else ""
+        if not directory:
+            return
+        self.last_open_dir = directory
+        self.settings.setValue("lastOpenDir", directory)
+
+    def rememberSaveDirectory(self, directory, batch=False):
+        if not directory:
+            return
+        self.last_save_dir = directory
+        self.settings.setValue("lastSaveDir", directory)
+        if batch:
+            self.last_batch_dir = directory
+            self.settings.setValue("lastBatchDir", directory)
 
     def applySelectedPaths(self, file_paths):
         if not file_paths:
@@ -442,7 +469,10 @@ class Backend(QObject):
 
     @pyqtSlot()
     def selectFile(self):
-        file_paths, _ = QFileDialog.getOpenFileNames(None, "Select XML File(s)", "", "XML Files (*.xml)")
+        start_dir = self.last_open_dir if self.last_open_dir and os.path.isdir(self.last_open_dir) else ""
+        file_paths, _ = QFileDialog.getOpenFileNames(None, "Select XML File(s)", start_dir, "XML Files (*.xml)")
+        if file_paths:
+            self.rememberOpenDirectory(file_paths[0])
         self.applySelectedPaths(file_paths)
 
     @pyqtSlot('QVariantList')
@@ -520,6 +550,7 @@ class Backend(QObject):
     @pyqtSlot(str)
     def setSelectionType(self,type_str):
         self.xml_type = type_str
+        self.settings.setValue("lastXmlType", type_str)
         if self.root:
             self.root.setProperty("selectionType",type_str)
 
@@ -730,6 +761,7 @@ class Backend(QObject):
     @pyqtSlot(object, str, str)
     def collectBatchResult(self, df, xml_type, xml_file):
         default_output_path = build_default_batch_output_path(xml_file)
+        default_dir = self.last_batch_dir if self.last_batch_dir and os.path.isdir(self.last_batch_dir) else os.path.dirname(default_output_path)
         self.batch_results.append({
             "df": df.replace([float('inf'), float('-inf')], 0).fillna(0),
             "xml_type": xml_type,
@@ -738,8 +770,8 @@ class Backend(QObject):
         self.batch_outputs.append({
             "sourceFile": os.path.basename(xml_file),
             "fileName": os.path.basename(default_output_path),
-            "saveDir": os.path.dirname(default_output_path),
-            "savePath": default_output_path
+            "saveDir": default_dir,
+            "savePath": os.path.join(default_dir, os.path.basename(default_output_path))
         })
         self.refreshBatchOutputsProperty()
         if self.current_batch_index < len(self.batch_file_statuses):
@@ -779,6 +811,7 @@ class Backend(QObject):
             return
         self.batch_outputs[index]["saveDir"] = directory
         self.batch_outputs[index]["savePath"] = os.path.join(directory, self.batch_outputs[index]["fileName"])
+        self.rememberSaveDirectory(directory, batch=True)
         self.refreshBatchOutputsProperty()
 
     @pyqtSlot(str)
@@ -788,13 +821,15 @@ class Backend(QObject):
         for i in range(len(self.batch_outputs)):
             self.batch_outputs[i]["saveDir"] = directory
             self.batch_outputs[i]["savePath"] = os.path.join(directory, self.batch_outputs[i]["fileName"])
+        self.rememberSaveDirectory(directory, batch=True)
         self.refreshBatchOutputsProperty()
 
     @pyqtSlot(int)
     def browseBatchOutputDirectory(self, index):
         if index < 0 or index >= len(self.batch_outputs):
             return
-        chosen_dir = QFileDialog.getExistingDirectory(None, "Select Save Folder", self.batch_outputs[index]["saveDir"])
+        start_dir = self.batch_outputs[index]["saveDir"] if self.batch_outputs[index]["saveDir"] else self.last_batch_dir
+        chosen_dir = QFileDialog.getExistingDirectory(None, "Select Save Folder", start_dir)
         if not chosen_dir:
             return
         self.updateBatchOutputDirectory(index, chosen_dir)
@@ -803,7 +838,7 @@ class Backend(QObject):
     def browseBatchOutputDirectoryForAll(self):
         if not self.batch_outputs:
             return
-        start_dir = self.batch_outputs[0]["saveDir"] if self.batch_outputs[0]["saveDir"] else ""
+        start_dir = self.batch_outputs[0]["saveDir"] if self.batch_outputs[0]["saveDir"] else self.last_batch_dir
         chosen_dir = QFileDialog.getExistingDirectory(None, "Select Save Folder for All Files", start_dir)
         if not chosen_dir:
             return
@@ -862,6 +897,8 @@ class Backend(QObject):
         dialog.setWindowTitle("Save Excel File")
         dialog.setNameFilter("Excel Files (*.xlsx)")
         dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        if self.last_save_dir and os.path.isdir(self.last_save_dir):
+            dialog.setDirectory(self.last_save_dir)
         save_path = dialog.selectedFiles()[0] if dialog.exec() else None
         if save_path and not save_path.lower().endswith(".xlsx"): save_path += ".xlsx"
         if not save_path:
@@ -869,6 +906,7 @@ class Backend(QObject):
             self.thread.wait()
             self.resetProperties()
             return
+        self.rememberSaveDirectory(os.path.dirname(save_path), batch=False)
         if not confirm_overwrite_paths([save_path], "Confirm Overwrite"):
             self.thread.quit()
             self.thread.wait()
@@ -950,4 +988,5 @@ if __name__=="__main__":
     if not engine.rootObjects(): sys.exit(-1)
 
     backend.root=engine.rootObjects()[0]
+    backend.applyRememberedSettingsToUI()
     sys.exit(app.exec())
