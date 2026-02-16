@@ -6,45 +6,79 @@ Check out https://doc.qt.io/qtcreator/creator-quick-ui-forms.html for details on
 */
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material  // Added for Material style customizations (e.g., ComboBox)
+import QtQuick.Controls.Material
 import QtQuick.Layouts
-import QtQuick.Window  // Added for Window
+import QtQuick.Window
 import QtMultimedia
 
-Window {  // Changed from Rectangle to Window for top-level display
-    visible: true  // Ensure it's visible
-    width: 400  // Default width; user can resize
-    height: 500  // Default height; user can resize
-    minimumWidth: 400  // Prevent shrinking below this
-    minimumHeight: 500  // Prevent shrinking below this
-    title: "ExcelTool"  // Added title for the window
-    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint  // Added MaximizeButtonHint for resizing
-    onProcessStateChanged: requestActivate()  // Bring window to front when state changes
+Window {
+    visible: true
+    width: 400
+    height: 500
+    minimumWidth: 400
+    minimumHeight: 500
+    title: "ExcelTool"
+    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
+    onProcessStateChanged: requestActivate()
 
     property string processState: "idle"
     property string selectedFile: ""
     property string selectionType: ""
     property int progress: 0
-    property string fileSize: ""  // Added: For displaying actual file size
+    property string fileSize: ""
+    property var selectedFiles: []
+    property bool isBatch: false
+    property int currentBatchIndex: 0
+    property int totalBatchFiles: 0
+    property string currentFileName: ""
 
-    // Scaling factor based on window size for proportional resizing
-    property real scaleFactor: Math.min(width / 400, height / 500)  // Base on 400x500; adjust as needed
+
+    property real scaleFactor: Math.min(width / 400, height / 500)
+    property real fileInfoBaseHeight: 60 * scaleFactor
+    property real fileInfoMaxHeight: 220 * scaleFactor
+    property real fileInfoDesiredHeight: fileInfoText.implicitHeight + (16 * scaleFactor)
+    property real fileInfoCardHeight: Math.min(fileInfoMaxHeight, Math.max(fileInfoBaseHeight, fileInfoDesiredHeight))
+    property real headerCompress: processState === "selecting"
+                                 ? Math.max(0, Math.min(1, (fileInfoCardHeight - (90 * scaleFactor)) / (130 * scaleFactor)))
+                                 : 0
+    property real headerScale: 1.0 - (0.38 * headerCompress)
+
+    function baseName(path) {
+        var normalized = String(path).replace(/\\/g, "/")
+        var parts = normalized.split("/")
+        return parts.length ? parts[parts.length - 1] : normalized
+    }
+
+    function batchFilesDescription() {
+        if (!selectedFiles || selectedFiles.length === 0) {
+            return "No files selected"
+        }
+        return selectedFiles.map(function(f) {
+            return baseName(f) + " (" + backend.getFileSize(f) + ")"
+        }).join("\n")
+    }
 
     onSelectionTypeChanged: {
         var idx = typeComboBox.model.indexOf(selectionType);
         if (idx >= 0 && typeComboBox.currentIndex !== idx) {
             typeComboBox.currentIndex = idx;
         }
+
+        if (!isBatch) {
+            selectedFiles = [];
+            currentBatchIndex = 0;
+            totalBatchFiles = 0;
+        }
     }
 
-    // Animations for progress
+
     NumberAnimation {
         id: convertAnimation
-        target: this  // Changed from 'root' to 'this'
+        target: this
         property: "progress"
         from: 0
         to: 100
-        duration: 2000 // 2 seconds for simulation
+        duration: 2000
         onStopped: {
             processState = "creating"
             progress = 0
@@ -54,27 +88,27 @@ Window {  // Changed from Rectangle to Window for top-level display
 
     NumberAnimation {
         id: createAnimation
-        target: this  // Changed from 'root' to 'this'
+        target: this
         property: "progress"
         from: 0
         to: 100
-        duration: 1500 // 1.5 seconds for simulation
+        duration: 1500
         onStopped: {
             processState = "complete"
         }
     }
 
-    // Custom error dialog for invalid file types (centered and properly sized)
+
     Popup {
         id: errorDialog
         modal: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        anchors.centerIn: parent  // Centers the popup in the window
-        width: 300 * scaleFactor  // Set popup width to match content
-        height: 150 * scaleFactor  // Set popup height to match content
+        anchors.centerIn: parent
+        width: 300 * scaleFactor
+        height: 150 * scaleFactor
 
         Rectangle {
-            anchors.fill: parent  // Fill the popup
+            anchors.fill: parent
             color: "white"
             border.color: "black"
             border.width: 1
@@ -111,18 +145,21 @@ Window {  // Changed from Rectangle to Window for top-level display
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 20 * scaleFactor  // Scale margins
-        spacing: 20 * scaleFactor  // Scale spacing
+        anchors.leftMargin: 20 * scaleFactor
+        anchors.rightMargin: 20 * scaleFactor
+        anchors.bottomMargin: 20 * scaleFactor
+        anchors.topMargin: (20 - (8 * headerCompress)) * scaleFactor
+        spacing: (20 - (6 * headerCompress)) * scaleFactor
 
-        // Header
+
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 10 * scaleFactor  // Scale spacing
+            spacing: (10 - (4 * headerCompress)) * scaleFactor
 
             AnimatedImage {
                 id: copywriting
-                Layout.preferredWidth: 200 * scaleFactor  // Reduced width for smaller size
-                Layout.preferredHeight: 110 * scaleFactor  // Reduced height for smaller size
+                Layout.preferredWidth: 200 * scaleFactor * headerScale
+                Layout.preferredHeight: 110 * scaleFactor * headerScale
                 source: "images/copywriting.gif"
                 speed: 0.4724
                 fillMode: Image.PreserveAspectFit
@@ -132,14 +169,14 @@ Window {  // Changed from Rectangle to Window for top-level display
             Text {
                 text: qsTr("ExcelTool")
                 font.family: "Tahoma"
-                font.pixelSize: 32 * scaleFactor  // Reduced font size for smaller title
+                font.pixelSize: 32 * scaleFactor * headerScale
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 color: "#e6000000"
                 text: "Convert your XML files with ease"
-                font.pixelSize: 16 * scaleFactor  // Reduced font size for smaller subtitle
+                font.pixelSize: 16 * scaleFactor * headerScale
                 font.family: "Verdana"
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -147,80 +184,80 @@ Window {  // Changed from Rectangle to Window for top-level display
             Text {
                 color: "#bd000000"
                 text: "by wahchachaps"
-                font.pixelSize: 12 * scaleFactor  // Reduced font size for smaller credits
+                font.pixelSize: 12 * scaleFactor * headerScale
                 font.family: "Verdana"
                 Layout.alignment: Qt.AlignHCenter
             }
         }
 
-        // Idle State: Styled File Selection (Inspired by React Code)
+
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 200 * scaleFactor  // Scale height
+            Layout.preferredHeight: 165 * scaleFactor
             color: "#f0f0f0"
-            border.color: dropArea.containsDrag ? "#4f46e5" : "#cccccc"  // Change border to indigo when dragging
-            border.width: dropArea.containsDrag ? 3 : 2  // Thicker border when dragging
+            border.color: dropArea.containsDrag ? "#4f46e5" : "#cccccc"
+            border.width: dropArea.containsDrag ? 3 : 2
             radius: 10
             visible: processState === "idle"
 
-            // MouseArea for click interaction (simulates React's input click)
+
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    backend.selectFile()  // Triggers Python file dialog
-                    selectionType = ""  // Reset combo box to default
-                    typeComboBox.currentIndex = -1  // Explicitly reset combo box to default
+                    backend.selectFile()
+                    selectionType = ""
+                    typeComboBox.currentIndex = -1
                 }
             }
 
-            // DropArea for drag-and-drop support (single, complete block)
+
             DropArea {
                 id: dropArea
                 anchors.fill: parent
-                keys: ["text/uri-list"]  // Accept file drops
+                keys: ["text/uri-list"]
 
                 onEntered: {
-                    // Optional: Provide additional feedback when entering the drop zone
+
                     console.log("Drag entered drop zone")
                 }
 
                 onExited: {
-                    // Optional: Reset feedback when exiting
+
                     console.log("Drag exited drop zone")
                 }
 
-                onDropped: function(drop) {  // Explicitly declare the 'drop' parameter to fix the deprecation warning
+                onDropped: function(drop) {
                     if (drop.hasUrls) {
-                        var fileUrl = drop.urls[0]  // Take the first dropped file
-                        var filePath = fileUrl.toString().replace("file:///", "")  // Convert URL to local path (Windows-specific)
-                        
-                        // Validate: Check if it's an XML file
+                        var fileUrl = drop.urls[0]
+                        var filePath = fileUrl.toString().replace("file:///", "")
+
+
                         if (filePath.toLowerCase().endsWith(".xml")) {
-                            selectedFile = filePath  // Set the selected file
-                            backend.setSelectedFile(filePath)  // Update Python's selected_file
-                            selectionType = ""  // Reset combo box to default
-                            typeComboBox.currentIndex = -1  // Explicitly reset combo box to default
-                            processState = "selecting"  // Transition to selecting state
-                            
-                            // Get formatted file size directly from Python (no re-calculation needed)
+                            selectedFile = filePath
+                            backend.setSelectedFile(filePath)
+                            selectionType = ""
+                            typeComboBox.currentIndex = -1
+                            processState = "selecting"
+
+
                             fileSize = backend.getFileSize(filePath)
                         } else {
-                            // Show error dialog for invalid file types
+
                             errorDialog.open()
                         }
                     }
                 }
             }
 
-            // Hover effect (enhanced for drop zone)
+
             Rectangle {
                 anchors.fill: parent
-                color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")  // Light blue for drag, original for hover
-                border.color: dropArea.containsDrag ? "#4f46e5" : (parent.hovered ? "#4f46e5" : "#cccccc")  // Indigo for drag/hover
+                color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")
+                border.color: dropArea.containsDrag ? "#4f46e5" : (parent.hovered ? "#4f46e5" : "#cccccc")
                 border.width: dropArea.containsDrag ? 3 : (parent.hovered ? 2 : 2)
                 radius: 10
-                opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)  // Higher opacity for drag
+                opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)
                 Behavior on opacity { NumberAnimation { duration: 200 } }
                 Behavior on color { ColorAnimation { duration: 200 } }
                 Behavior on border.width { NumberAnimation { duration: 200 } }
@@ -228,105 +265,124 @@ Window {  // Changed from Rectangle to Window for top-level display
 
             ColumnLayout {
                 anchors.centerIn: parent
-                spacing: 10 * scaleFactor  // Scale spacing
+                spacing: 10 * scaleFactor
 
-                // Upload Icon (replaced Text with Image)
+
+
                 Rectangle {
-                    Layout.preferredWidth: 48 * scaleFactor  // Scale width
-                    Layout.preferredHeight: 48 * scaleFactor  // Scale height
+                    Layout.preferredWidth: 48 * scaleFactor
+                    Layout.preferredHeight: 48 * scaleFactor
                     color: "transparent"
                     Layout.alignment: Qt.AlignHCenter
 
                     Image {
-                        source: "images/upload.png"  // Path to the upload icon image
-                        fillMode: Image.PreserveAspectFit  // Maintain aspect ratio
+                        source: "images/upload.png"
+                        fillMode: Image.PreserveAspectFit
                         width: parent.width
                         height: parent.height
                         anchors.centerIn: parent
                     }
                 }
 
+
+
                 Text {
-                    text: dropArea.containsDrag ? "Drop XML file here" : "Click to select XML file"  // Dynamic text for drag feedback
-                    font.pixelSize: 16 * scaleFactor  // Scale font size
+                    text: dropArea.containsDrag ? "Drop XML file here" : "Click to select XML file(s)"
+                    font.pixelSize: 16 * scaleFactor
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
                 }
 
                 Text {
                     text: "XML files only"
-                    font.pixelSize: 12 * scaleFactor  // Scale font size
+                    font.pixelSize: 12 * scaleFactor
                     color: "#666666"
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
         }
 
-        // Selecting State: File Info and Type Selection
+
         ColumnLayout {
             visible: processState === "selecting"
-            spacing: 5 * scaleFactor  // Reduced spacing to fit contents better within fixed window size
+            spacing: (8 - (2 * headerCompress)) * scaleFactor
 
             Rectangle {
+                id: fileInfoCard
                 Layout.fillWidth: true
-                Layout.preferredHeight: 60 * scaleFactor  // Reduced height to fit better
+                Layout.preferredHeight: fileInfoCardHeight
                 color: "#f9f9f9"
                 border.color: "#dddddd"
                 border.width: 1
                 radius: 5
+                clip: true
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "File: " + (selectedFile ? selectedFile.split('/').pop() : "") + "\nSize: " + fileSize  // Updated: Use actual fileSize
-                    font.pixelSize: 12 * scaleFactor  // Reduced font size to fit
+                ScrollView {
+                    id: fileInfoScroll
+                    anchors.fill: parent
+                    anchors.margins: 8 * scaleFactor
+                    clip: true
+
+                    Text {
+                        id: fileInfoText
+                        width: fileInfoScroll.availableWidth
+                        text: isBatch
+                            ? "Batch Mode: " + selectedFiles.length + " files selected\n" + batchFilesDescription()
+                            : "File: " + (selectedFile ? baseName(selectedFile) : "") + "\nSize: " + fileSize
+                        font.pixelSize: 12 * scaleFactor
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                        lineHeight: 1.15
+                        lineHeightMode: Text.ProportionalHeight
+                    }
                 }
             }
 
             Text {
                 text: "Select Conversion Type"
-                font.pixelSize: 14 * scaleFactor  // Reduced font size
+                font.pixelSize: 14 * scaleFactor
                 font.bold: true
             }
 
-            // Replaced RadioButtons with a styled ComboBox
+
             ComboBox {
                 id: typeComboBox
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
-                model: ["Den", "Glacier", "Globe"]  // Only actual options in model
-                currentIndex: -1  // No selection initially
-                displayText: currentIndex === -1 ? "Select XML type" : currentText  // Show placeholder when no selection
+                Layout.preferredHeight: 35 * scaleFactor
+                model: ["Den", "Glacier", "Globe"]
+                currentIndex: -1
+                displayText: currentIndex === -1 ? "Select XML type" : currentText
                 onCurrentTextChanged: {
                     if (currentIndex >= 0 && currentText !== selectionType) {
-                        // Only update if a valid option is selected (removed Glacier special case)
+
                         backend.setSelectionType(currentText);
                     }
                 }
 
-                // Oval-shaped background
+
                 background: Rectangle {
                     color: "#ffffff"
                     border.color: "#cccccc"
                     border.width: 1
-                    radius: height / 2  // Makes it oval
+                    radius: height / 2
                 }
 
-                // Content item styling
+
                 contentItem: Text {
-                    text: typeComboBox.displayText  // Use displayText to show placeholder or selected text
-                    font.pixelSize: 12 * scaleFactor  // Reduced font size
-                    color: typeComboBox.currentIndex === -1 ? "#999999" : "#333333"  // Gray for placeholder, black for selected
+                    text: typeComboBox.displayText
+                    font.pixelSize: 12 * scaleFactor
+                    color: typeComboBox.currentIndex === -1 ? "#999999" : "#333333"
                     verticalAlignment: Text.AlignVCenter
                     leftPadding: 15
                     rightPadding: 15
                 }
 
-                // Delegate for dropdown items
+
                 delegate: ItemDelegate {
                     width: typeComboBox.width
                     contentItem: Text {
                         text: modelData
-                        font.pixelSize: 12 * scaleFactor  // Reduced font size
+                        font.pixelSize: 12 * scaleFactor
                         color: "#333333"
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 15
@@ -338,13 +394,13 @@ Window {  // Changed from Rectangle to Window for top-level display
                     }
                 }
 
-                // Indicator (dropdown arrow)
+
                 indicator: Canvas {
                     id: canvas
                     x: typeComboBox.width - width - typeComboBox.rightPadding
                     y: typeComboBox.topPadding + (typeComboBox.availableHeight - height) / 2
-                    width: 10 * scaleFactor  // Reduced width
-                    height: 6 * scaleFactor  // Reduced height
+                    width: 10 * scaleFactor
+                    height: 6 * scaleFactor
                     contextType: "2d"
 
                     Connections {
@@ -363,7 +419,7 @@ Window {  // Changed from Rectangle to Window for top-level display
                     }
                 }
 
-                // Popup styling
+
                 popup: Popup {
                     y: typeComboBox.height - 1
                     width: typeComboBox.width
@@ -386,11 +442,11 @@ Window {  // Changed from Rectangle to Window for top-level display
                 }
             }
 
-            // Custom "Confirm and Convert" Button (Rectangle + Text + MouseArea)
+
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
-                color: selectionType !== "" ? "#4f46e5" : "#cccccc"  // Indigo when enabled, gray when disabled (removed Glacier condition)
+                Layout.preferredHeight: 35 * scaleFactor
+                color: selectionType !== "" ? "#4f46e5" : "#cccccc"
                 radius: 5
                 border.color: "#4f46e5"
                 border.width: 1
@@ -399,65 +455,68 @@ Window {  // Changed from Rectangle to Window for top-level display
                     anchors.centerIn: parent
                     text: "Confirm and Convert"
                     color: "white"
-                    font.pixelSize: 12 * scaleFactor  // Reduced font size
+                    font.pixelSize: 12 * scaleFactor
                     font.bold: true
                 }
 
                 MouseArea {
                     anchors.fill: parent
-                    enabled: selectionType !== ""  // Enable for any selection (removed Glacier condition)
+                    enabled: selectionType !== ""
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: backend.confirmAndConvert()  // Connect to Python
+                    onClicked: backend.confirmAndConvert()
                 }
-            }
+        }
 
-            // Custom "Select Different File" Button (Rectangle + Text + MouseArea)
+
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor  // Reduced height
-                color: "#f3f4f6"  // Light gray background
+                Layout.preferredHeight: 35 * scaleFactor
+                Layout.bottomMargin: 12 * scaleFactor
+                color: "#4f46e5"
                 radius: 5
-                border.color: "#d1d5db"
+                border.color: "#4f46e5"
                 border.width: 1
 
                 Text {
                     anchors.centerIn: parent
                     text: "Select Different File"
-                    color: "#374151"  // Dark gray text
-                    font.pixelSize: 12 * scaleFactor  // Reduced font size
+                    color: "white"
+                    font.pixelSize: 12 * scaleFactor
                     font.bold: true
                 }
 
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: backend.selectDifferentFile()  // Connect to Python
+                    onClicked: backend.selectFile()
                 }
             }
         }
 
-            // Converting State
+
         ColumnLayout {
             visible: processState === "converting"
-            spacing: 20 * scaleFactor  // Scale spacing
+            spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Converting File"
-                font.pixelSize: 24 * scaleFactor  // Scale font size
+                font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Please wait while we process your XML file..."
-                font.pixelSize: 14 * scaleFactor  // Scale font size
+                font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
-                text: "Using " + selectionType + " conversion"
-                font.pixelSize: 12 * scaleFactor  // Scale font size
+                text: isBatch
+                    ? "Processing: " + currentFileName + " (" + (currentBatchIndex + 1) + " of " + totalBatchFiles + ")"
+                    : "Using " + selectionType + " conversion"
+                font.pixelSize: 12 * scaleFactor
                 color: "#666666"
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -465,64 +524,66 @@ Window {  // Changed from Rectangle to Window for top-level display
             BusyIndicator {
                 Layout.alignment: Qt.AlignHCenter
                 running: true
-                implicitWidth: 64 * scaleFactor  // Scale size
-                implicitHeight: 64 * scaleFactor  // Scale size
-                Material.accent: "#4f46e5"  // Added: Matches button color
+                implicitWidth: 64 * scaleFactor
+                implicitHeight: 64 * scaleFactor
+                Material.accent: "#4f46e5"
             }
         }
 
-        // Creating State
+
         ColumnLayout {
             visible: processState === "creating"
-            spacing: 20 * scaleFactor  // Scale spacing
+            spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Creating New Excel File"
-                font.pixelSize: 24 * scaleFactor  // Scale font size
+                font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
-                text: "Almost done, generating your output file..."
-                font.pixelSize: 14 * scaleFactor  // Scale font size
+                text: isBatch
+                    ? "Saving: " + currentFileName + " (" + (currentBatchIndex + 1) + " of " + totalBatchFiles + ")"
+                    : "Almost done, generating your output file..."
+                font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
             }
 
             BusyIndicator {
                 Layout.alignment: Qt.AlignHCenter
                 running: true
-                implicitWidth: 64 * scaleFactor  // Scale size
-                implicitHeight: 64 * scaleFactor  // Scale size
-                Material.accent: "#4f46e5"  // Added: Matches button color
+                implicitWidth: 64 * scaleFactor
+                implicitHeight: 64 * scaleFactor
+                Material.accent: "#4f46e5"
             }
         }
 
-        // Complete State
+
         ColumnLayout {
             visible: processState === "complete"
-            spacing: 20 * scaleFactor  // Scale spacing
+            spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
 
             Text {
                 text: "Conversion Complete!"
-                font.pixelSize: 24 * scaleFactor  // Scale font size
+                font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
-
             Text {
-                text: "Your file has been successfully converted using " + selectionType
-                font.pixelSize: 14 * scaleFactor  // Scale font size
+                text: isBatch
+                    ? "Batch conversion complete! " + totalBatchFiles + " files processed successfully."
+                    : "Your file has been successfully converted using " + selectionType
+                font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
             }
 
-            // Custom "Convert Another File" Button (Rectangle + Text + MouseArea)
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40 * scaleFactor  // Scale height
-                color: "#4f46e5"  // Indigo background
+                Layout.preferredHeight: 40 * scaleFactor
+                color: "#4f46e5"
                 radius: 5
                 border.color: "#4f46e5"
                 border.width: 1
@@ -531,16 +592,54 @@ Window {  // Changed from Rectangle to Window for top-level display
                     anchors.centerIn: parent
                     text: "Convert Another File"
                     color: "white"
-                    font.pixelSize: 14 * scaleFactor  // Scale font size
+                    font.pixelSize: 14 * scaleFactor
                     font.bold: true
                 }
-
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: backend.convertAnotherFile()  // Connect to Python
+                    onClicked: {
+                        backend.convertAnotherFile()
+                        isBatch = false
+                        selectedFiles = []
+                        currentBatchIndex = 0
+                        totalBatchFiles = 0
+                        processState = "idle"
+                    }
                 }
             }
+        }
+    }
+
+    Rectangle {
+        id: backButton
+        visible: processState === "selecting" || processState === "complete"
+        z: 100
+        width: 36 * scaleFactor
+        height: 36 * scaleFactor
+        radius: width / 2
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: 12 * scaleFactor
+        anchors.topMargin: 12 * scaleFactor
+        color: backButtonArea.pressed ? "#3f36bd" : (backButtonArea.containsMouse ? "#4f46e5" : "#4338ca")
+        border.color: "#c7d2fe"
+        border.width: 1
+
+        Text {
+            anchors.centerIn: parent
+            text: "\u2190"
+            color: "white"
+            font.pixelSize: 18 * scaleFactor
+            font.bold: true
+        }
+
+        MouseArea {
+            id: backButtonArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: backend.convertAnotherFile()
         }
     }
 }

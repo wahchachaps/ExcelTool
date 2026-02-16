@@ -9,36 +9,44 @@ from PyQt6.QtQml import QQmlApplicationEngine
 class Worker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
-    dataReady = pyqtSignal(object, str)
+    dataReady = pyqtSignal(object, str, str)
 
-    def __init__(self, xml_file, xml_type):
+    def __init__(self, xml_files, xml_type):
         super().__init__()
-        self.xml_file = xml_file
+        self.xml_files = xml_files
         self.xml_type = xml_type
+        self.current_file_index = 0
 
     @pyqtSlot()
     def process(self):
+        if self.current_file_index >= len(self.xml_files):
+            return
+        xml_file = self.xml_files[self.current_file_index]
         try:
             if self.xml_type not in ["Den", "Globe", "Glacier"]:
                 self.error.emit("Only Den, Glacier, and Globe are implemented.")
                 return
             try:
                 df_xml = pd.read_xml(
-                    self.xml_file,
+                    xml_file,
                     xpath=".//ns:Items",
                     namespaces={"ns": "http://tempuri.org/ArrayFieldDataSet.xsd"}
                 )
             except Exception as e:
-                self.error.emit(f"Error reading XML directly: {e}")
+                self.error.emit(f"Error reading XML {xml_file}: {e}")
+                self.current_file_index += 1
+                self.process()
                 return
             self.progress.emit(50)
-            if self.xml_type == "Den": self.process_den_from_df(df_xml)
-            elif self.xml_type == "Globe": self.process_globe_from_df(df_xml)
-            elif self.xml_type == "Glacier": self.process_glacier_from_df(df_xml)
+            if self.xml_type == "Den": self.process_den_from_df(df_xml, xml_file)
+            elif self.xml_type == "Globe": self.process_globe_from_df(df_xml, xml_file)
+            elif self.xml_type == "Glacier": self.process_glacier_from_df(df_xml, xml_file)
         except Exception as e:
-            self.error.emit(f"An unexpected error occurred: {e}")
+            self.error.emit(f"An unexpected error occurred for {xml_file}: {e}")
+            self.current_file_index += 1
+            self.process()
 
-    def process_den_from_df(self, df):
+    def process_den_from_df(self, df, xml_file):
         try:
             df_filtered = df[~df.iloc[:,0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
             if df_filtered.empty:
@@ -60,11 +68,11 @@ class Worker(QObject):
                 final_rows.append(row)
             final_df = pd.DataFrame(final_rows)
             self.progress.emit(90)
-            self.dataReady.emit(final_df, self.xml_type)
+            self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Den processing error: {e}")
 
-    def process_globe_from_df(self, df):
+    def process_globe_from_df(self, df, xml_file):
         try:
             df_filtered = df[~df.iloc[:,0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
             if df_filtered.empty:
@@ -87,11 +95,11 @@ class Worker(QObject):
                 self.progress.emit(50+int((i/total_rows)*40))
             final_df = pd.DataFrame(final_rows)
             self.progress.emit(90)
-            self.dataReady.emit(final_df, self.xml_type)
+            self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Globe processing error: {e}")
 
-    def process_glacier_from_df(self, df):
+    def process_glacier_from_df(self, df, xml_file):
         try:
             df_filtered = df[~df.iloc[:,0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
             if df_filtered.empty:
@@ -112,9 +120,121 @@ class Worker(QObject):
                 final_rows.append(row)
             final_df = pd.DataFrame(final_rows)
             self.progress.emit(90)
-            self.dataReady.emit(final_df, self.xml_type)
+            self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Glacier processing error: {e}")
+
+class SaveWorker(QObject):
+    progress = pyqtSignal(int)
+    error = pyqtSignal(str)
+    saved = pyqtSignal(str, str)
+
+    def __init__(self, df, xml_type, save_path, xml_file):
+        super().__init__()
+        self.df = df
+        self.xml_type = xml_type
+        self.save_path = save_path
+        self.xml_file = xml_file
+
+    @pyqtSlot()
+    def save(self):
+        try:
+            df = self.df.replace([float('inf'), float('-inf')], 0).fillna(0)
+            self.progress.emit(90)
+            with pd.ExcelWriter(self.save_path, engine='xlsxwriter') as writer:
+                xml_file_name = os.path.splitext(os.path.basename(self.xml_file))[0]
+                sheet_name = ('_'.join(xml_file_name.split('_')[:-1]) if '_' in xml_file_name else xml_file_name)[:31]
+                df.to_excel(writer, index=False, header=False, sheet_name=sheet_name)
+                workbook = writer.book
+                ws = writer.sheets[sheet_name]
+
+                general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
+                text_fmt = workbook.add_format({'num_format': '@', 'border': 1, 'align': 'right'})
+                num_fmt = workbook.add_format({'num_format': '0.00', 'border': 1, 'align': 'right'})
+                header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#99CC00', 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
+                colored_header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#F2E6FF', 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
+                colored_num_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#F2E6FF', 'border': 1, 'align': 'right'})
+                black_header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#F2E6FF', 'font_color': 'black', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
+
+                for r in range(2):
+                    for c in range(df.shape[1]):
+                        val = df.iloc[r, c]
+                        if self.xml_type == "Globe" and c in [3, 5, 10]: ws.write(r, c, val, black_header_fmt)
+                        elif self.xml_type in ["Glacier", "Den"] and c in [3, 5, 8]: ws.write(r, c, val, black_header_fmt)
+                        else: ws.write(r, c, val, header_fmt)
+
+                for r in range(2, len(df)):
+                    for c in range(df.shape[1]):
+                        val = df.iloc[r, c]
+                        if self.xml_type == "Den":
+                            if c == 1: ws.write(r, c, val, text_fmt)
+                            elif c in [3, 5, 8]:
+                                ws.write_formula(r, c, val, colored_num_fmt) if isinstance(val, str) and val.startswith("=") else ws.write(r, c, val, colored_num_fmt)
+                            elif isinstance(val, (int, float)): ws.write(r, c, val, num_fmt)
+                            elif isinstance(val, str) and val.startswith("="): ws.write_formula(r, c, val, num_fmt)
+                            else: ws.write(r, c, val, text_fmt)
+                        elif self.xml_type == "Globe":
+                            if c in [3, 5, 10]: ws.write(r, c, val, colored_num_fmt)
+                            elif 3 <= c <= 14 and c not in [3, 5, 10]: ws.write(r, c, val, num_fmt)
+                            elif c == 0: ws.write(r, c, val, general_fmt)
+                            elif c == 1: ws.write(r, c, val, text_fmt)
+                            else: ws.write(r, c, val, num_fmt)
+                        else:
+                            if c in [3, 5, 8]: ws.write(r, c, val, colored_num_fmt)
+                            elif 3 <= c <= 12 and c not in [3, 5, 8]: ws.write(r, c, val, num_fmt)
+                            elif c == 0: ws.write(r, c, val, general_fmt)
+                            elif c == 1: ws.write(r, c, val, text_fmt)
+                            else: ws.write(r, c, val, num_fmt)
+
+                for r in range(2, len(df)):
+                    cell_value = df.iloc[r, 0]
+                    if isinstance(cell_value, str):
+                        try:
+                            hh, mm, ss = map(int, cell_value.strip().split(' ')[1].split(':'))
+                            if ss != 0:
+                                for c in range(df.shape[1]):
+                                    val = df.iloc[r, c]
+                                    if self.xml_type == "Den":
+                                        if c == 1: fmt_props = {'num_format': '@', 'border': 1, 'align': 'right'}
+                                        elif isinstance(val, str) and val.startswith("=") or isinstance(val, (int, float)): fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right'}
+                                        else: fmt_props = {'num_format': '@', 'border': 1, 'align': 'right'}
+                                    elif self.xml_type == "Globe":
+                                        if c in [3, 5, 10]: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right', 'bg_color': '#B4C6E7'}
+                                        elif 3 <= c <= 14 and c not in [3, 5, 10]: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right'}
+                                        elif c == 0: fmt_props = {'num_format': 'General', 'border': 1, 'align': 'right'}
+                                        elif c == 1: fmt_props = {'num_format': '@', 'border': 1, 'align': 'right'}
+                                        else: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right'}
+                                    else:
+                                        if c in [3, 5, 8]: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right', 'bg_color': '#FFFF00'}
+                                        elif 3 <= c <= 12 and c not in [3, 5, 8]: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right'}
+                                        elif c == 0: fmt_props = {'num_format': 'General', 'border': 1, 'align': 'right'}
+                                        elif c == 1: fmt_props = {'num_format': '@', 'border': 1, 'align': 'right'}
+                                        else: fmt_props = {'num_format': '0.00', 'border': 1, 'align': 'right'}
+                                    fmt_props['bg_color'] = '#FFFF00'
+                                    highlight_fmt = workbook.add_format(fmt_props)
+                                    if isinstance(val, str) and val.startswith("="): ws.write_formula(r, c, val, highlight_fmt)
+                                    else: ws.write(r, c, val, highlight_fmt)
+                        except: continue
+
+                if self.xml_type == "Den":
+                    widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
+                    hidden_cols = {6: 16.27}
+                elif self.xml_type == "Globe":
+                    widths = [17.73, 17.27] + [14.91] * 9 + [41.91, 33.27, 43.36, 23.36]
+                    hidden_cols = {6: 14.91, 7: 14.91, 8: 14.91}
+                elif self.xml_type == "Glacier":
+                    widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
+                    hidden_cols = {6: 16.91}
+                for i, w in enumerate(widths[:df.shape[1]]): ws.set_column(i, i, w)
+                for col, w in hidden_cols.items():
+                    if col < df.shape[1]: ws.set_column(col, col, w, None, {'hidden': True})
+
+            self.progress.emit(100)
+            self.saved.emit(self.save_path, self.xml_file)
+        except Exception as e:
+            self.error.emit(f"Failed to save Excel: {e}")
+            
+
 
 class Backend(QObject):
     progressUpdated = pyqtSignal(int)
@@ -124,28 +244,81 @@ class Backend(QObject):
         self.engine = engine
         self.root = None
         self.selected_file = None
+        self.selected_files = []
         self.xml_type = ""
         self.progress = 0
+        self.is_batch = False
+        self.current_batch_index = 0
         self.progressUpdated.connect(self.updateProgressInQML)
         self.thread = None
         self.worker = None
+        self.save_thread = None
+        self.save_worker = None
 
     @pyqtSlot()
     def selectFile(self):
-        file_path,_ = QFileDialog.getOpenFileName(None,"Select XML File","","XML Files (*.xml)")
-        if not file_path:
-            QMessageBox.information(None,"Info","No file selected")
+        file_paths, _ = QFileDialog.getOpenFileNames(None, "Select XML File(s)", "", "XML Files (*.xml)")
+        if not file_paths:
+            QMessageBox.information(None, "Info", "No files selected")
             return
-        self.selected_file = file_path
+
+        is_batch_selection = len(file_paths) > 1
+        self.selected_files = file_paths if is_batch_selection else []
+        self.selected_file = file_paths[0] if not is_batch_selection else None
+        self.is_batch = is_batch_selection
+        self.current_batch_index = 0
+
         if self.root:
-            self.root.setProperty("selectedFile",file_path)
-            try:
-                size_bytes=os.path.getsize(file_path)
-                size_str=f"{size_bytes/1024:.2f} KB" if size_bytes<1024*1024 else f"{size_bytes/(1024*1024):.2f} MB"
-                self.root.setProperty("fileSize",size_str)
-            except OSError:
-                self.root.setProperty("fileSize","Unknown")
-            self.root.setProperty("processState","selecting")
+            self.root.setProperty("selectedFile", self.selected_file or "")
+            self.root.setProperty("selectedFiles", self.selected_files if is_batch_selection else [])
+            self.root.setProperty("isBatch", is_batch_selection)
+            self.root.setProperty("totalBatchFiles", len(file_paths) if is_batch_selection else 0)
+            self.root.setProperty("currentBatchIndex", 0)
+            self.root.setProperty("currentFileName", os.path.basename(file_paths[0]) if is_batch_selection else "")
+            if is_batch_selection:
+                self.root.setProperty("fileSize", "")
+            else:
+                try:
+                    size_bytes = os.path.getsize(self.selected_file)
+                    size_str = f"{size_bytes/1024:.2f} KB" if size_bytes < 1024 * 1024 else f"{size_bytes/(1024*1024):.2f} MB"
+                    self.root.setProperty("fileSize", size_str)
+                except OSError:
+                    self.root.setProperty("fileSize", "Unknown")
+            self.root.setProperty("processState", "selecting")
+
+
+    @pyqtSlot()
+    def selectBatchFiles(self):
+        self.selectFile()
+
+    @pyqtSlot()
+    def confirmAndConvertBatch(self):
+        if not self.xml_type or not self.selected_files:
+            return
+        if self.root:
+            self.root.setProperty("processState", "converting")
+            self.root.setProperty("currentBatchIndex", 0)
+            self.root.setProperty("totalBatchFiles", len(self.selected_files))
+        self.progress = 0
+        self.current_batch_index = 0
+        self.progressUpdated.emit(self.progress)
+        self.processNextBatchFile()
+
+    def processNextBatchFile(self):
+        if self.current_batch_index >= len(self.selected_files):
+            return
+        if self.root:
+            self.root.setProperty("currentBatchIndex", self.current_batch_index)
+            self.root.setProperty("totalBatchFiles", len(self.selected_files))
+            self.root.setProperty("currentFileName", os.path.basename(self.selected_files[self.current_batch_index]))
+        self.thread = QThread()
+        self.worker = Worker([self.selected_files[self.current_batch_index]], self.xml_type)
+        self.worker.moveToThread(self.thread)
+        self.worker.progress.connect(self.progressUpdated)
+        self.worker.error.connect(self.handleError)
+        self.worker.dataReady.connect(self.saveFile)
+        self.thread.started.connect(self.worker.process)
+        self.thread.start()
 
     @pyqtSlot(str)
     def setSelectionType(self,type_str):
@@ -157,12 +330,20 @@ class Backend(QObject):
     def confirmAndConvert(self):
         if not self.xml_type:
             return
+
+        if self.is_batch and self.selected_files:
+            self.confirmAndConvertBatch()
+            return
+
+        if not self.selected_file:
+            return
+
         if self.root:
             self.root.setProperty("processState","converting")
         self.progress=0
         self.progressUpdated.emit(self.progress)
         self.thread=QThread()
-        self.worker=Worker(self.selected_file,self.xml_type)
+        self.worker = Worker([self.selected_file], self.xml_type)
         self.worker.moveToThread(self.thread)
         self.worker.progress.connect(self.progressUpdated)
         self.worker.error.connect(self.handleError)
@@ -188,7 +369,16 @@ class Backend(QObject):
 
     @pyqtSlot(str)
     def setSelectedFile(self,file_path):
-        self.selected_file=file_path
+        self.selected_file = file_path
+        self.selected_files = []
+        self.is_batch = False
+        self.current_batch_index = 0
+        if self.root:
+            self.root.setProperty("isBatch", False)
+            self.root.setProperty("selectedFiles", [])
+            self.root.setProperty("totalBatchFiles", 0)
+            self.root.setProperty("currentBatchIndex", 0)
+            self.root.setProperty("currentFileName", "")
 
     def updateProgressInQML(self,value):
         if self.root:
@@ -201,138 +391,76 @@ class Backend(QObject):
         self.thread.quit()
         self.thread.wait()
 
-    @pyqtSlot(object,str)
-    def saveFile(self,df,xml_type):
-        df=df.replace([float('inf'),float('-inf')],0).fillna(0)
-        dialog=QFileDialog()
+    @pyqtSlot(object,str,str)
+    def saveFile(self, df, xml_type, xml_file):
+        df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
+        dialog = QFileDialog()
         dialog.setWindowTitle("Save Excel File")
         dialog.setNameFilter("Excel Files (*.xlsx)")
-        dialog.setWindowFlags(dialog.windowFlags()|Qt.WindowType.WindowStaysOnTopHint)
-        save_path=dialog.selectedFiles()[0] if dialog.exec() else None
-        if save_path and not save_path.lower().endswith(".xlsx"): save_path+=".xlsx"
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        save_path = dialog.selectedFiles()[0] if dialog.exec() else None
+        if save_path and not save_path.lower().endswith(".xlsx"): save_path += ".xlsx"
         if not save_path:
             if self.root:
-                self.root.setProperty("processState","idle")
+                self.root.setProperty("processState", "idle")
             self.thread.quit()
             self.thread.wait()
             return
 
         self.progressUpdated.emit(90)
-        try:
-            with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
-                xml_file_name=os.path.splitext(os.path.basename(self.selected_file))[0]
-                sheet_name=('_'.join(xml_file_name.split('_')[:-1]) if '_' in xml_file_name else xml_file_name)[:31]
-                df.to_excel(writer,index=False,header=False,sheet_name=sheet_name)
-                workbook=writer.book
-                ws=writer.sheets[sheet_name]
-
-                general_fmt=workbook.add_format({'num_format':'General','border':1,'align':'right'})
-                text_fmt=workbook.add_format({'num_format':'@','border':1,'align':'right'})
-                num_fmt=workbook.add_format({'num_format':'0.00','border':1,'align':'right'})
-                header_fmt=workbook.add_format({'num_format':'@','bg_color':'#99CC00','font_color':'white','align':'center','valign':'vcenter','left':1,'right':1})
-                colored_header_fmt=workbook.add_format({'num_format':'@','bg_color':'#F2E6FF','font_color':'white','align':'center','valign':'vcenter','left':1,'right':1})
-                colored_num_fmt=workbook.add_format({'num_format':'0.00','bg_color':'#F2E6FF','border':1,'align':'right'})
-                black_header_fmt = workbook.add_format({'num_format':'@','bg_color':'#F2E6FF','font_color':'black','align':'center','valign':'vcenter','left':1,'right':1})
-
-
-                for r in range(2):
-                    for c in range(df.shape[1]):
-                        val=df.iloc[r,c]
-                        if xml_type=="Globe" and c in [3,5,10]: ws.write(r,c,val,black_header_fmt)
-                        elif xml_type in ["Glacier","Den"] and c in [3,5,8]: ws.write(r,c,val,black_header_fmt)
-                        else: ws.write(r,c,val,header_fmt)
-
-                for r in range(2,len(df)):
-                    for c in range(df.shape[1]):
-                        val=df.iloc[r,c]
-                        if xml_type=="Den":
-                            if c==1: ws.write(r,c,val,text_fmt)
-                            elif c in [3,5,8]:
-                                ws.write_formula(r,c,val,colored_num_fmt) if isinstance(val,str) and val.startswith("=") else ws.write(r,c,val,colored_num_fmt)
-                            elif isinstance(val,(int,float)): ws.write(r,c,val,num_fmt)
-                            elif isinstance(val,str) and val.startswith("="): ws.write_formula(r,c,val,num_fmt)
-                            else: ws.write(r,c,val,text_fmt)
-                        elif xml_type=="Globe":
-                            if c in [3,5,10]: ws.write(r,c,val,colored_num_fmt)
-                            elif 3<=c<=14 and c not in [3,5,10]: ws.write(r,c,val,num_fmt)
-                            elif c==0: ws.write(r,c,val,general_fmt)
-                            elif c==1: ws.write(r,c,val,text_fmt)
-                            else: ws.write(r,c,val,num_fmt)
-                        else:
-                            if c in [3,5,8]: ws.write(r,c,val,colored_num_fmt)
-                            elif 3<=c<=12 and c not in [3,5,8]: ws.write(r,c,val,num_fmt)
-                            elif c==0: ws.write(r,c,val,general_fmt)
-                            elif c==1: ws.write(r,c,val,text_fmt)
-                            else: ws.write(r,c,val,num_fmt)
-
-                for r in range(2,len(df)):
-                    cell_value=df.iloc[r,0]
-                    if isinstance(cell_value,str):
-                        try:
-                            hh,mm,ss=map(int,cell_value.strip().split(' ')[1].split(':'))
-                            if ss!=0:
-                                for c in range(df.shape[1]):
-                                    val=df.iloc[r,c]
-                                    if xml_type=="Den":
-                                        if c==1: fmt_props={'num_format':'@','border':1,'align':'right'}
-                                        elif isinstance(val,str) and val.startswith("=") or isinstance(val,(int,float)): fmt_props={'num_format':'0.00','border':1,'align':'right'}
-                                        else: fmt_props={'num_format':'@','border':1,'align':'right'}
-                                    elif xml_type=="Globe":
-                                        if c in [3,5,10]: fmt_props={'num_format':'0.00','border':1,'align':'right','bg_color':'#B4C6E7'}
-                                        elif 3<=c<=14 and c not in [3,5,10]: fmt_props={'num_format':'0.00','border':1,'align':'right'}
-                                        elif c==0: fmt_props={'num_format':'General','border':1,'align':'right'}
-                                        elif c==1: fmt_props={'num_format':'@','border':1,'align':'right'}
-                                        else: fmt_props={'num_format':'0.00','border':1,'align':'right'}
-                                    else:
-                                        if c in [3,5,8]: fmt_props={'num_format':'0.00','border':1,'align':'right','bg_color':'#FFFF00'}
-                                        elif 3<=c<=12 and c not in [3,5,8]: fmt_props={'num_format':'0.00','border':1,'align':'right'}
-                                        elif c==0: fmt_props={'num_format':'General','border':1,'align':'right'}
-                                        elif c==1: fmt_props={'num_format':'@','border':1,'align':'right'}
-                                        else: fmt_props={'num_format':'0.00','border':1,'align':'right'}
-                                    fmt_props['bg_color']='#FFFF00'
-                                    highlight_fmt=workbook.add_format(fmt_props)
-                                    if isinstance(val,str) and val.startswith("="): ws.write_formula(r,c,val,highlight_fmt)
-                                    else: ws.write(r,c,val,highlight_fmt)
-                        except: continue
-
-                if xml_type=="Den":
-                    widths=[17.73,17.27]+[16.27]*7+[32.27,36.36,23.36,24.76]
-                    hidden_cols={6:16.27}  
-                elif xml_type=="Globe":
-                    widths=[17.73,17.27]+[14.91]*9+[41.91,33.27,43.36,23.36]
-                    hidden_cols={6:14.91, 7:14.91, 8:14.91} 
-                elif xml_type=="Glacier":
-                    widths=[17.73,17.27]+[16.91]*7+[18.73,17.55,23.36,23.36]
-                    hidden_cols={6:16.91}
-                for i,w in enumerate(widths[:df.shape[1]]):ws.set_column(i,i,w)
-                for col, w in hidden_cols.items():
-                    if col < df.shape[1]: ws.set_column(col, col, w, None, {'hidden': True})
-
-
-
-        except Exception as e:
-            QMessageBox.critical(None,"Error",f"Failed to save Excel: {e}")
-            if self.root: self.root.setProperty("processState","idle")
-            self.thread.quit()
-            self.thread.wait()
-            return
-
-        self.progressUpdated.emit(100)
-        if self.root: self.root.setProperty("processState","complete")
-        QMessageBox.information(None,"Done",f"Processed Excel saved:\n{save_path}")
+        self.save_thread = QThread()
+        self.save_worker = SaveWorker(df, xml_type, save_path, xml_file)
+        self.save_worker.moveToThread(self.save_thread)
+        self.save_worker.progress.connect(self.progressUpdated)
+        self.save_worker.error.connect(self.handleSaveError)
+        self.save_worker.saved.connect(self.handleSaved)
+        self.save_thread.started.connect(self.save_worker.save)
+        self.save_thread.start()
         self.thread.quit()
         self.thread.wait()
+
+    def handleSaveError(self, msg):
+        QMessageBox.critical(None, "Error", msg)
+        if self.root:
+            self.root.setProperty("processState", "idle")
+        self.save_thread.quit()
+        self.save_thread.wait()
+
+    @pyqtSlot(str, str)
+    def handleSaved(self, save_path, xml_file):
+        self.progressUpdated.emit(100)
+        QMessageBox.information(None, "Done", f"Processed Excel saved:\n{save_path}")
+        self.current_batch_index += 1
+        if self.root:
+            self.root.setProperty("currentBatchIndex", self.current_batch_index)
+        if self.current_batch_index < len(self.selected_files):
+            self.processNextBatchFile()
+        else:
+            if self.root:
+                self.root.setProperty("processState", "complete")
+        self.save_thread.quit()
+        self.save_thread.wait()
 
     def resetProperties(self):
         if self.root:
             self.root.setProperty("processState","idle")
             self.root.setProperty("selectedFile","")
+            self.root.setProperty("selectedFiles", [])
             self.root.setProperty("selectionType","")
             self.root.setProperty("fileSize","")
             self.root.setProperty("progress",0)
-        self.selected_file=None
+            self.root.setProperty("isBatch", False)
+            self.root.setProperty("totalBatchFiles", 0)
+            self.root.setProperty("currentBatchIndex", 0)
+            self.root.setProperty("currentFileName", "")
+        self.selected_file = None
+        self.selected_files = []
+        self.is_batch = False
+        self.current_batch_index = 0
         self.xml_type=""
         self.progress=0
+        self.save_thread = None
+        self.save_worker = None
 
 if __name__=="__main__":
     app=QApplication(sys.argv)
