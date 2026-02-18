@@ -1,8 +1,10 @@
 import sys
 import os
+import json
+import copy
 import pandas as pd
 import win32com.client as win32
-from PyQt6.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal, QThread, Qt, QSettings
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 
@@ -45,6 +47,40 @@ def get_invalid_batch_name_message(file_name):
     if base_name.endswith(".") or base_name.endswith(" "):
         return "File name cannot end with a dot or space."
     return ""
+
+def get_invalid_output_directory_message(directory):
+    folder = (directory or "").strip()
+    if not folder:
+        return "Save folder cannot be empty."
+    if not os.path.exists(folder):
+        return "Save folder does not exist."
+    if not os.path.isdir(folder):
+        return "Save path is not a folder."
+    if not os.access(folder, os.W_OK):
+        return "Save folder is not writable."
+    return ""
+
+
+def excel_col_to_index(col_name):
+    name = (col_name or "").strip().upper()
+    if not name or not name.isalpha():
+        return 0
+    idx = 0
+    for ch in name:
+        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return idx - 1
+
+
+def index_to_excel_col(idx):
+    n = max(0, int(idx))
+    out = ""
+    while True:
+        n, rem = divmod(n, 26)
+        out = chr(ord('A') + rem) + out
+        if n == 0:
+            break
+        n -= 1
+    return out
 
 
 def build_default_batch_output_path(xml_file):
@@ -108,12 +144,31 @@ def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
 
 def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
     df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
+    is_builtin = xml_type in ["Den", "Glacier", "Globe"]
     with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
         xml_file_name = os.path.splitext(os.path.basename(xml_file))[0]
         sheet_name = ('_'.join(xml_file_name.split('_')[:-1]) if '_' in xml_file_name else xml_file_name)[:31]
-        df.to_excel(writer, index=False, header=False, sheet_name=sheet_name)
+        custom_start_row = int(df.attrs.get("data_start_row", 3))
+        start_row = 0 if is_builtin else max(0, custom_start_row - 1)
+        df.to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=start_row)
         workbook = writer.book
         ws = writer.sheets[sheet_name]
+
+        if not is_builtin:
+            generic_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
+            for r in range(len(df)):
+                excel_r = start_row + r
+                for c in range(df.shape[1]):
+                    val = df.iloc[r, c]
+                    if isinstance(val, str) and val.startswith("="):
+                        ws.write_formula(excel_r, c, val, generic_fmt)
+                    else:
+                        ws.write(excel_r, c, val, generic_fmt)
+            custom_widths = df.attrs.get("custom_widths", None)
+            if isinstance(custom_widths, list):
+                for i, w in enumerate(custom_widths[:df.shape[1]]):
+                    ws.set_column(i, i, float(w))
+            return
 
         general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
         text_fmt = workbook.add_format({'num_format': '@', 'border': 1, 'align': 'right'})
@@ -239,10 +294,11 @@ class Worker(QObject):
     error = pyqtSignal(str)
     dataReady = pyqtSignal(object, str, str)
 
-    def __init__(self, xml_files, xml_type):
+    def __init__(self, xml_files, xml_type, format_definition=None):
         super().__init__()
         self.xml_files = xml_files
         self.xml_type = xml_type
+        self.format_definition = format_definition
         self.current_file_index = 0
 
     @pyqtSlot()
@@ -251,9 +307,6 @@ class Worker(QObject):
             return
         xml_file = self.xml_files[self.current_file_index]
         try:
-            if self.xml_type not in ["Den", "Globe", "Glacier"]:
-                self.error.emit("Only Den, Glacier, and Globe are implemented.")
-                return
             try:
                 df_xml = pd.read_xml(
                     xml_file,
@@ -266,13 +319,62 @@ class Worker(QObject):
                 self.process()
                 return
             self.progress.emit(50)
-            if self.xml_type == "Den": self.process_den_from_df(df_xml, xml_file)
-            elif self.xml_type == "Globe": self.process_globe_from_df(df_xml, xml_file)
-            elif self.xml_type == "Glacier": self.process_glacier_from_df(df_xml, xml_file)
+            if self.xml_type == "Den":
+                self.process_den_from_df(df_xml, xml_file)
+            elif self.xml_type == "Globe":
+                self.process_globe_from_df(df_xml, xml_file)
+            elif self.xml_type == "Glacier":
+                self.process_glacier_from_df(df_xml, xml_file)
+            elif self.format_definition:
+                self.process_custom_from_df(df_xml, xml_file)
+            else:
+                self.error.emit(f"Format '{self.xml_type}' is not implemented.")
         except Exception as e:
             self.error.emit(f"An unexpected error occurred for {xml_file}: {e}")
             self.current_file_index += 1
             self.process()
+
+    def process_custom_from_df(self, df, xml_file):
+        try:
+            df_filtered = df[~df.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            if df_filtered.empty:
+                self.error.emit(f"No valid rows found in {self.xml_type} XML.")
+                return
+            df_data = df_filtered.iloc[:, 1:]
+            columns = self.format_definition.get("columns", [])
+            if not columns:
+                self.error.emit(f"Format '{self.xml_type}' has no columns.")
+                return
+
+            col_indexes = [excel_col_to_index(col.get("col", "")) for col in columns]
+            max_col = (max(col_indexes) + 1) if col_indexes else 1
+            final_rows = []
+            for i in range(len(df_data)):
+                row = [""] * max_col
+                # Custom formats always start writing data at Excel row 3.
+                excel_row_num = i + 3
+                for col_def in columns:
+                    target = excel_col_to_index(col_def.get("col", ""))
+                    col_type = str(col_def.get("type", "empty"))
+                    value = str(col_def.get("value", ""))
+                    if col_type == "data":
+                        try:
+                            source_idx = int(value)
+                        except Exception:
+                            source_idx = -1
+                        if 0 <= source_idx < df_data.shape[1]:
+                            row[target] = df_data.iloc[i, source_idx]
+                    elif col_type == "formula":
+                        row[target] = value.replace("{r}", str(excel_row_num)).replace("{r-1}", str(max(1, excel_row_num - 1)))
+                final_rows.append(row)
+
+            final_df = pd.DataFrame(final_rows)
+            final_df.attrs["custom_widths"] = [float(col.get("width", 14) or 14) for col in columns]
+            final_df.attrs["data_start_row"] = 3
+            self.progress.emit(90)
+            self.dataReady.emit(final_df, self.xml_type, xml_file)
+        except Exception as e:
+            self.error.emit(f"{self.xml_type} processing error: {e}")
 
     def process_den_from_df(self, df, xml_file):
         try:
@@ -409,6 +511,10 @@ class BatchSaveWorker(QObject):
 
 class Backend(QObject):
     progressUpdated = pyqtSignal(int)
+    formatModelChanged = pyqtSignal()
+    formatDesignerStatusChanged = pyqtSignal()
+    xmlTypeOptionsChanged = pyqtSignal()
+    formatSavePathChanged = pyqtSignal()
 
     def __init__(self, engine):
         super().__init__()
@@ -430,11 +536,238 @@ class Backend(QObject):
         self.batch_results = []
         self.batch_outputs = []
         self.batch_file_statuses = []
+        self.formats_dir = os.path.join(os.path.dirname(__file__), "formats")
+        self.formats_path = os.path.join(self.formats_dir, "format_model.json")
+        self.format_save_path = self.formats_path
+        self.format_model = self._load_or_default_formats()
+        self.xml_type_options = []
+        self.format_designer_status = ""
+        self._format_edit_snapshot = None
+        self._format_edit_active = False
         self.settings = QSettings("ExcelTool", "ExcelTool")
         self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
         self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
         self.last_batch_dir = str(self.settings.value("lastBatchDir", "", str))
         self.xml_type = str(self.settings.value("lastXmlType", "", str))
+        self.format_save_path = self.formats_path
+        self._refresh_xml_type_options(emit_signal=False)
+
+    @pyqtProperty('QVariantList', notify=formatModelChanged)
+    def formatModel(self):
+        return self.format_model
+
+    @pyqtProperty(str, notify=formatDesignerStatusChanged)
+    def formatDesignerStatus(self):
+        return self.format_designer_status
+
+    @pyqtProperty('QVariantList', notify=xmlTypeOptionsChanged)
+    def xmlTypeOptions(self):
+        return self.xml_type_options
+
+    @pyqtProperty(str, notify=formatSavePathChanged)
+    def formatSavePath(self):
+        return self.format_save_path
+
+    def _set_format_designer_status(self, status):
+        self.format_designer_status = status
+        self.formatDesignerStatusChanged.emit()
+
+    def _default_columns(self, formula):
+        return [
+            {"col": "A", "type": "data", "value": "0", "width": 17},
+            {"col": "B", "type": "data", "value": "1", "width": 17},
+            {"col": "C", "type": "data", "value": "2", "width": 14},
+            {"col": "D", "type": "formula", "value": formula, "width": 14},
+        ]
+
+    def _build_columns_from_spec(self, max_col, mapping, formulas, widths):
+        target_to_source = {target: source for source, target in mapping.items()}
+        columns = []
+        for idx in range(max_col):
+            if idx in formulas:
+                col_type = "formula"
+                value = formulas[idx]
+            elif idx in target_to_source:
+                col_type = "data"
+                value = str(target_to_source[idx])
+            else:
+                col_type = "empty"
+                value = ""
+            width = widths[idx] if idx < len(widths) else 14
+            columns.append({
+                "col": index_to_excel_col(idx),
+                "type": col_type,
+                "value": value,
+                "width": width
+            })
+        return columns
+
+    def _default_formats(self):
+        den_mapping = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 12}
+        den_formulas = {
+            3: "=C{r}*280",
+            5: "=(E{r}-E{r-1})*280/1000",
+            8: "=(H{r}-H{r-1})*280/1000",
+        }
+        den_widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
+
+        globe_mapping = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 7, 6: 8, 7: 9, 8: 11, 9: 12, 10: 13, 11: 14}
+        globe_formulas = {
+            3: "=C{r}*1400",
+            5: "=(E{r}-E{r-1})*1400/1000",
+            10: "=(J{r}-J{r-1})*1400/1000",
+        }
+        globe_widths = [17.73, 17.27] + [14.91] * 9 + [41.91, 33.27, 43.36, 23.36]
+
+        glacier_mapping = den_mapping
+        glacier_formulas = den_formulas
+        glacier_widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
+
+        return [
+            {"name": "Den", "columns": self._build_columns_from_spec(13, den_mapping, den_formulas, den_widths)},
+            {"name": "Glacier", "columns": self._build_columns_from_spec(13, glacier_mapping, glacier_formulas, glacier_widths)},
+            {"name": "Globe", "columns": self._build_columns_from_spec(15, globe_mapping, globe_formulas, globe_widths)},
+        ]
+
+    def _normalize_loaded_formats(self, raw_formats):
+        normalized = []
+        if not isinstance(raw_formats, list):
+            return normalized
+        for item in raw_formats:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            raw_columns = item.get("columns", [])
+            columns = []
+            if isinstance(raw_columns, list):
+                for col in raw_columns:
+                    if not isinstance(col, dict):
+                        continue
+                    try:
+                        width_value = int(col.get("width", 14) or 14)
+                    except Exception:
+                        width_value = 14
+                    columns.append({
+                        "col": str(col.get("col", "A")).upper()[:3] or "A",
+                        "type": str(col.get("type", "data")),
+                        "value": str(col.get("value", "")),
+                        "width": max(1, min(200, width_value)),
+                    })
+            if not columns:
+                columns = self._default_columns("=C{r}*280")
+            normalized.append({"name": name, "columns": columns})
+        return normalized
+
+    def _load_or_default_formats(self):
+        os.makedirs(self.formats_dir, exist_ok=True)
+        if os.path.exists(self.formats_path):
+            try:
+                with open(self.formats_path, "r", encoding="utf-8") as fp:
+                    loaded = json.load(fp)
+                parsed = self._normalize_loaded_formats(loaded)
+                if parsed:
+                    return parsed
+            except Exception:
+                pass
+        return self._default_formats()
+
+    def _refresh_xml_type_options(self, emit_signal=True):
+        self.xml_type_options = [fmt.get("name", "") for fmt in self.format_model if fmt.get("name", "")]
+        if emit_signal:
+            self.xmlTypeOptionsChanged.emit()
+
+    def _unique_format_name(self, base_name, skip_index=None):
+        raw = (base_name or "").strip()
+        if not raw:
+            raw = "New Format"
+        existing = {
+            self.format_model[i]["name"].lower()
+            for i in range(len(self.format_model))
+            if i != skip_index
+        }
+        if raw.lower() not in existing:
+            return raw
+        counter = 2
+        while True:
+            candidate = f"{raw} {counter}"
+            if candidate.lower() not in existing:
+                return candidate
+            counter += 1
+
+    def _next_column_label(self, columns):
+        idx = len(columns)
+        if idx < 26:
+            return chr(ord("A") + idx)
+        first = chr(ord("A") + ((idx // 26) - 1))
+        second = chr(ord("A") + (idx % 26))
+        return f"{first}{second}"
+
+    def _is_builtin_format_name(self, name):
+        return str(name).strip().lower() in ("den", "glacier", "globe")
+
+    def _only_builtin_formats_left(self):
+        if not self.format_model:
+            return True
+        for fmt in self.format_model:
+            if not self._is_builtin_format_name(fmt.get("name", "")):
+                return False
+        return True
+
+    def _persist_formats_after_delete(self):
+        target_path = self.formats_path
+        try:
+            os.makedirs(self.formats_dir, exist_ok=True)
+            if self._only_builtin_formats_left():
+                if os.path.exists(target_path):
+                    result = QMessageBox.question(
+                        None,
+                        "Delete Format File",
+                        f"Only built-in formats remain.\n\nDelete this JSON file from disk?\n{target_path}",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
+                    if result == QMessageBox.StandardButton.Yes:
+                        os.remove(target_path)
+                        self._set_format_designer_status(f"Deleted format file from disk: {target_path}")
+                    else:
+                        with open(target_path, "w", encoding="utf-8") as fp:
+                            json.dump(self.format_model, fp, indent=2)
+                        self._set_format_designer_status(f"Kept format file and saved built-in formats: {target_path}")
+                else:
+                    self._set_format_designer_status("Only built-in formats remain. No format file found to delete.")
+                return
+            with open(target_path, "w", encoding="utf-8") as fp:
+                json.dump(self.format_model, fp, indent=2)
+            self._set_format_designer_status(f"Updated format file: {target_path}")
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to update format file: {e}")
+
+    def _autosave_formats(self):
+        try:
+            os.makedirs(self.formats_dir, exist_ok=True)
+            with open(self.formats_path, "w", encoding="utf-8") as fp:
+                json.dump(self.format_model, fp, indent=2)
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to auto-save format file: {e}")
+
+    def _safe_format_filename(self, name):
+        raw = str(name or "").strip()
+        if not raw:
+            raw = "format"
+        cleaned = "".join(ch for ch in raw if ch not in '<>:"/\\|?*' and ord(ch) >= 32).strip().rstrip(". ")
+        if not cleaned:
+            cleaned = "format"
+        return f"{cleaned}.json"
+
+    def _delete_format_file_by_name(self, name):
+        file_name = self._safe_format_filename(name)
+        target_path = os.path.join(self.formats_dir, file_name)
+        if os.path.exists(target_path):
+            os.remove(target_path)
+            return target_path
+        return ""
 
     def refreshBatchFileStatusesProperty(self):
         if self.root:
@@ -445,6 +778,239 @@ class Backend(QObject):
             return
         if self.xml_type:
             self.root.setProperty("selectionType", self.xml_type)
+
+    @pyqtSlot()
+    def openFormatDesigner(self):
+        if self.root:
+            self.root.setProperty("processState", "formatDesigner")
+
+    @pyqtSlot()
+    def closeFormatDesigner(self):
+        if self.root:
+            self.root.setProperty("processState", "idle")
+
+    @pyqtSlot()
+    def chooseFormatSavePath(self):
+        start_dir = self.formats_dir
+        chosen_path, _ = QFileDialog.getSaveFileName(
+            None,
+            "Save Formats As",
+            start_dir,
+            "JSON Files (*.json)"
+        )
+        if not chosen_path:
+            return
+        if not chosen_path.lower().endswith(".json"):
+            chosen_path += ".json"
+        self.format_save_path = self.formats_path
+        self.settings.setValue("formatSavePath", self.formats_path)
+        self.formatSavePathChanged.emit()
+        self._set_format_designer_status(f"Formats are saved to {self.formats_path}")
+
+    @pyqtSlot()
+    def importFormatModelFromFile(self):
+        start_dir = self.formats_dir
+        chosen_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Open Format File",
+            start_dir,
+            "JSON Files (*.json)"
+        )
+        if not chosen_path:
+            return
+        try:
+            with open(chosen_path, "r", encoding="utf-8") as fp:
+                loaded = json.load(fp)
+            if isinstance(loaded, dict):
+                loaded = [loaded]
+            parsed = self._normalize_loaded_formats(loaded)
+            if not parsed:
+                QMessageBox.warning(None, "Import Failed", "No valid format entries were found in the selected JSON file.")
+                self._set_format_designer_status("Failed to import: no valid format entries found.")
+                return
+
+            added = 0
+            for fmt in parsed:
+                name = self._unique_format_name(fmt.get("name", "New Format"))
+                self.format_model.append({
+                    "name": name,
+                    "columns": fmt.get("columns", self._default_columns("=C{r}*280"))
+                })
+                added += 1
+
+            self.format_save_path = self.formats_path
+            self.settings.setValue("formatSavePath", self.formats_path)
+            self.formatSavePathChanged.emit()
+            self.formatModelChanged.emit()
+            self._refresh_xml_type_options()
+            self._autosave_formats()
+            self._set_format_designer_status(f"Imported {added} format(s) from {chosen_path}")
+            QMessageBox.information(None, "Formats Imported", f"Imported {added} format(s) from:\n{chosen_path}")
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to import format file: {e}")
+            QMessageBox.critical(None, "Import Failed", f"Failed to import format file:\n{e}")
+
+    @pyqtSlot()
+    def addFormatDefinition(self):
+        name = self._unique_format_name("New Format")
+        self.format_model.append({"name": name, "columns": self._default_columns("=C{r}*280")})
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+
+    @pyqtSlot(result=int)
+    def createFormatDraft(self):
+        # Snapshot first so cancelling from create flow removes the draft format.
+        self._format_edit_snapshot = copy.deepcopy(self.format_model)
+        self._format_edit_active = True
+        name = self._unique_format_name("New Format")
+        self.format_model.append({"name": name, "columns": self._default_columns("=C{r}*280")})
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+        return len(self.format_model) - 1
+
+    @pyqtSlot(int)
+    def beginFormatEdit(self, format_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return
+        self._format_edit_snapshot = copy.deepcopy(self.format_model)
+        self._format_edit_active = True
+
+    @pyqtSlot()
+    def cancelFormatEdit(self):
+        if not self._format_edit_active or self._format_edit_snapshot is None:
+            return
+        self.format_model = copy.deepcopy(self._format_edit_snapshot)
+        self._format_edit_snapshot = None
+        self._format_edit_active = False
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+        self._set_format_designer_status("Discarded unsaved format changes.")
+
+    @pyqtSlot(result=bool)
+    def confirmDiscardFormatEdit(self):
+        if not self._format_edit_active:
+            return True
+        result = QMessageBox.question(
+            None,
+            "Discard Changes",
+            "Unsaved format changes will not be saved.\n\nGo back to list anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    @pyqtSlot()
+    def commitFormatEdit(self):
+        self._format_edit_snapshot = None
+        self._format_edit_active = False
+
+    @pyqtSlot(int)
+    def deleteFormatDefinition(self, index):
+        if index < 0 or index >= len(self.format_model):
+            return
+        format_name = self.format_model[index].get("name", "")
+        if self._is_builtin_format_name(format_name):
+            self._set_format_designer_status("Failed to delete: Den, Glacier, and Globe are built-in formats.")
+            return
+        deleted_file_path = ""
+        try:
+            os.makedirs(self.formats_dir, exist_ok=True)
+            deleted_file_path = self._delete_format_file_by_name(format_name)
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to delete format file: {e}")
+        self.format_model.pop(index)
+        if not self.format_model:
+            self.format_model = self._default_formats()
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+        self._persist_formats_after_delete()
+        if deleted_file_path:
+            self._set_format_designer_status(f"Deleted format and removed file: {deleted_file_path}")
+
+    @pyqtSlot(int, str)
+    def renameFormatDefinition(self, index, name):
+        if index < 0 or index >= len(self.format_model):
+            return
+        self.format_model[index]["name"] = self._unique_format_name(name, skip_index=index)
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+
+    @pyqtSlot(int)
+    def addFormatRow(self, format_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return
+        columns = self.format_model[format_index]["columns"]
+        columns.append({
+            "col": self._next_column_label(columns),
+            "type": "data",
+            "value": "",
+            "width": 14,
+        })
+        self.formatModelChanged.emit()
+
+    @pyqtSlot(int, int)
+    def deleteFormatRow(self, format_index, row_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return
+        columns = self.format_model[format_index]["columns"]
+        if row_index < 0 or row_index >= len(columns):
+            return
+        columns.pop(row_index)
+        self.formatModelChanged.emit()
+
+    @pyqtSlot(int, int, str, 'QVariant')
+    def updateFormatRow(self, format_index, row_index, field, value):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return
+        columns = self.format_model[format_index]["columns"]
+        if row_index < 0 or row_index >= len(columns):
+            return
+        row = columns[row_index]
+        if field == "col":
+            normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())
+            row["col"] = normalized[:3] if normalized else "A"
+        elif field == "type":
+            type_value = str(value)
+            row["type"] = type_value if type_value in ("data", "formula", "empty") else "data"
+        elif field == "value":
+            row["value"] = str(value)
+        elif field == "width":
+            try:
+                width_value = int(value)
+            except Exception:
+                width_value = 14
+            row["width"] = max(1, min(200, width_value))
+        self.formatModelChanged.emit()
+
+    @pyqtSlot()
+    def saveFormatModel(self):
+        try:
+            target_path = self.formats_path
+            os.makedirs(self.formats_dir, exist_ok=True)
+            with open(target_path, "w", encoding="utf-8") as fp:
+                json.dump(self.format_model, fp, indent=2)
+            self._refresh_xml_type_options()
+            self._set_format_designer_status(f"Saved formats to {target_path}")
+            QMessageBox.information(None, "Formats Saved", f"Formats saved to:\n{target_path}")
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to save format: {e}")
+
+    @pyqtSlot(int)
+    def saveFormatByName(self, format_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return
+        try:
+            os.makedirs(self.formats_dir, exist_ok=True)
+            fmt = self.format_model[format_index]
+            file_name = self._safe_format_filename(fmt.get("name", "format"))
+            target_path = os.path.join(self.formats_dir, file_name)
+            with open(target_path, "w", encoding="utf-8") as fp:
+                json.dump(fmt, fp, indent=2)
+            self._autosave_formats()
+            self._set_format_designer_status(f"Saved format to {target_path}")
+            QMessageBox.information(None, "Format Saved", f"Format saved to:\n{target_path}")
+        except Exception as e:
+            self._set_format_designer_status(f"Failed to save format: {e}")
 
     def rememberOpenDirectory(self, file_path):
         directory = os.path.dirname(file_path) if file_path else ""
@@ -570,7 +1136,8 @@ class Backend(QObject):
             self.root.setProperty("totalBatchFiles", len(self.selected_files))
             self.root.setProperty("currentFileName", os.path.basename(self.selected_files[self.current_batch_index]))
         self.thread = QThread()
-        self.worker = Worker([self.selected_files[self.current_batch_index]], self.xml_type)
+        selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
+        self.worker = Worker([self.selected_files[self.current_batch_index]], self.xml_type, selected_format)
         self.worker.moveToThread(self.thread)
         self.worker.progress.connect(self.progressUpdated)
         self.worker.error.connect(self.handleError)
@@ -678,7 +1245,8 @@ class Backend(QObject):
         self.progress=0
         self.progressUpdated.emit(self.progress)
         self.thread=QThread()
-        self.worker = Worker([self.selected_file], self.xml_type)
+        selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
+        self.worker = Worker([self.selected_file], self.xml_type, selected_format)
         self.worker.moveToThread(self.thread)
         self.worker.progress.connect(self.progressUpdated)
         self.worker.error.connect(self.handleError)
@@ -828,6 +1396,10 @@ class Backend(QObject):
         if self.root:
             self.root.setProperty("batchOutputs", self.batch_outputs)
 
+    @pyqtSlot(str, result=str)
+    def validateOutputDirectory(self, directory):
+        return get_invalid_output_directory_message(directory)
+
     @pyqtSlot(int, str)
     def updateBatchOutputFileName(self, index, file_name):
         if index < 0 or index >= len(self.batch_outputs):
@@ -881,6 +1453,22 @@ class Backend(QObject):
     @pyqtSlot()
     def saveAllBatchOutputs(self):
         if not self.batch_results or not self.batch_outputs:
+            return
+        dir_issues = []
+        for i, output in enumerate(self.batch_outputs):
+            reason = get_invalid_output_directory_message(output.get("saveDir", ""))
+            if reason:
+                src = output.get("sourceFile", f"Item {i + 1}")
+                dir_issues.append(f"{i + 1}. {src}: {reason}")
+        if dir_issues:
+            suffix = "" if len(dir_issues) <= 8 else f"\n...and {len(dir_issues) - 8} more issue(s)"
+            QMessageBox.warning(
+                None,
+                "Invalid Save Folder",
+                "Please fix these save folder issues before confirming:\n\n"
+                + "\n".join(dir_issues[:8])
+                + suffix
+            )
             return
         issues = []
         for i, output in enumerate(self.batch_outputs):

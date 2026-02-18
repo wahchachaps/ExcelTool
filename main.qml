@@ -12,6 +12,7 @@ import QtQuick.Window
 import QtMultimedia
 
 Window {
+    id: rootWindow
     visible: true
     width: 400
     height: 500
@@ -24,6 +25,10 @@ Window {
         requestActivate()
         if (processState !== "batchReview") {
             batchFileNameDrafts = ({})
+        }
+        if (processState !== "formatDesigner" && processState !== "formatCreate") {
+            rootWindow.formatDesignerSelectedFormatIndex = 0
+            rootWindow.formatDesignerSelectedRowIndex = -1
         }
     }
 
@@ -40,6 +45,9 @@ Window {
     property string currentFileName: ""
     property var batchOutputs: []
     property var batchFileNameDrafts: ({})
+    property int formatDesignerSelectedFormatIndex: 0
+    property int formatDesignerSelectedRowIndex: -1
+    property string formatEditorFocusType: ""
 
 
     property real scaleFactor: Math.min(width / 400, height / 500)
@@ -72,7 +80,7 @@ Window {
     property bool compactHeaderMode: windowSizeChanged
                                    || (processState === "selecting" && fileInfoPressure >= compactTriggerPressure)
     property real compactGifSize: Math.max(100, 100 * scaleFactor)
-    property real headerReservedTopSpace: (compactHeaderMode && processState !== "converting") ? (compactGifSize + (20 * scaleFactor)) : 0
+    property real headerReservedTopSpace: (compactHeaderMode && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate") ? (compactGifSize + (20 * scaleFactor)) : 0
 
     function baseName(path) {
         var normalized = String(path).replace(/\\/g, "/")
@@ -99,6 +107,10 @@ Window {
         return ""
     }
 
+    function validateBatchSaveDir(path) {
+        return backend.validateOutputDirectory(String(path || ""))
+    }
+
     function hasInvalidBatchNamesInModel() {
         if (!batchOutputs) {
             return false
@@ -107,6 +119,18 @@ Window {
             var draftName = batchFileNameDrafts[i]
             var baseNameToCheck = draftName !== undefined ? draftName : stripXlsx(batchOutputs[i].fileName)
             if (validateBatchBaseName(baseNameToCheck).length > 0) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function hasInvalidBatchSaveDirsInModel() {
+        if (!batchOutputs) {
+            return false
+        }
+        for (var i = 0; i < batchOutputs.length; i++) {
+            if (validateBatchSaveDir(batchOutputs[i].saveDir).length > 0) {
                 return true
             }
         }
@@ -219,7 +243,7 @@ Window {
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
             spacing: (10 - (4 * headerCompress)) * scaleFactor
-            visible: processState !== "batchReview" && processState !== "converting" && !compactHeaderMode
+            visible: processState !== "batchReview" && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate" && !compactHeaderMode
 
             AnimatedImage {
                 id: copywriting
@@ -357,6 +381,30 @@ Window {
                     color: "#666666"
                     Layout.alignment: Qt.AlignHCenter
                 }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 35 * scaleFactor
+            color: "#0f766e"
+            radius: 5
+            border.color: "#0f766e"
+            border.width: 1
+            visible: processState === "idle"
+
+            Text {
+                anchors.centerIn: parent
+                text: "Open Format Designer"
+                color: "white"
+                font.pixelSize: 12 * scaleFactor
+                font.bold: true
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: backend.openFormatDesigner()
             }
         }
 
@@ -500,7 +548,7 @@ Window {
                 id: typeComboBox
                 Layout.fillWidth: true
                 Layout.preferredHeight: 35 * scaleFactor
-                model: ["Den", "Glacier", "Globe"]
+                model: backend.xmlTypeOptions
                 currentIndex: -1
                 displayText: currentIndex === -1 ? "Select XML type" : currentText
                 onCurrentTextChanged: {
@@ -644,6 +692,683 @@ Window {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: backend.selectFile()
+                }
+            }
+        }
+
+
+        ColumnLayout {
+            visible: processState === "formatDesigner"
+            spacing: 8 * scaleFactor
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            Text {
+                text: "Select Format"
+                font.pixelSize: 22 * scaleFactor
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: "Click a format to edit it"
+                color: "#64748b"
+                font.pixelSize: 11 * scaleFactor
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: "Create Format"
+                color: "#4f46e5"
+                font.pixelSize: 12 * scaleFactor
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        var newIndex = backend.createFormatDraft()
+                        rootWindow.formatDesignerSelectedFormatIndex = Math.max(0, newIndex)
+                        rootWindow.formatDesignerSelectedRowIndex = -1
+                        processState = "formatCreate"
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: "#f8fafc"
+                border.color: "#d1d5db"
+                border.width: 1
+                radius: 6
+                clip: true
+
+                ListView {
+                    anchors.fill: parent
+                    anchors.margins: 8 * scaleFactor
+                    spacing: 6 * scaleFactor
+                    model: backend.formatModel
+                    clip: true
+
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: 44 * scaleFactor
+                        radius: 5
+                        property bool isBuiltInFormat: (modelData.name === "Den" || modelData.name === "Glacier" || modelData.name === "Globe")
+                        color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#eef2ff" : "white"
+                        border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#4f46e5" : "#e5e7eb"
+                        border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 6 * scaleFactor
+                            spacing: 6 * scaleFactor
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.name
+                                color: "#111827"
+                                font.pixelSize: 12 * scaleFactor
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 56 * scaleFactor
+                                Layout.preferredHeight: 28 * scaleFactor
+                                radius: 4
+                                color: "#4f46e5"
+                                border.color: "#4f46e5"
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: isBuiltInFormat ? "Open" : "Edit"
+                                    color: "white"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.formatDesignerSelectedFormatIndex = index
+                                        rootWindow.formatDesignerSelectedRowIndex = -1
+                                        backend.beginFormatEdit(index)
+                                        processState = "formatCreate"
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                visible: !isBuiltInFormat
+                                Layout.preferredWidth: 56 * scaleFactor
+                                Layout.preferredHeight: 28 * scaleFactor
+                                radius: 4
+                                color: backend.formatModel.length > 1 ? "#dc2626" : "#9ca3af"
+                                border.color: color
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Delete"
+                                    color: "white"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: backend.formatModel.length > 1
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: {
+                                        backend.deleteFormatDefinition(index)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: backend.formatDesignerStatus
+                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : "#0f766e"
+                font.pixelSize: 10 * scaleFactor
+                wrapMode: Text.Wrap
+                visible: backend.formatDesignerStatus.length > 0
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38 * scaleFactor
+                radius: 5
+                color: "#0f766e"
+                border.color: "#0f766e"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "Open File"
+                    color: "white"
+                    font.pixelSize: 12 * scaleFactor
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: backend.importFormatModelFromFile()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 36 * scaleFactor
+                radius: 5
+                color: "#ffffff"
+                border.color: "#4f46e5"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "Back"
+                    color: "#4338ca"
+                    font.pixelSize: 12 * scaleFactor
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: backend.closeFormatDesigner()
+                }
+            }
+        }
+
+        ColumnLayout {
+            id: formatCreatePanel
+            visible: processState === "formatCreate"
+            property int selectedFormatIndex: rootWindow.formatDesignerSelectedFormatIndex
+            property bool selectedBuiltInFormat: (
+                backend.formatModel.length > 0
+                && selectedFormatIndex >= 0
+                && selectedFormatIndex < backend.formatModel.length
+                && (backend.formatModel[selectedFormatIndex].name === "Den"
+                    || backend.formatModel[selectedFormatIndex].name === "Glacier"
+                    || backend.formatModel[selectedFormatIndex].name === "Globe")
+            )
+            spacing: 8 * scaleFactor
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            Text {
+                text: formatCreatePanel.selectedBuiltInFormat ? "View Format" : "Create Format"
+                font.pixelSize: 22 * scaleFactor
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            TextField {
+                id: formatNameField
+                Layout.fillWidth: true
+                text: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
+                    ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].name
+                    : ""
+                placeholderText: "Format name"
+                readOnly: formatCreatePanel.selectedBuiltInFormat
+                onEditingFinished: {
+                    if (!formatCreatePanel.selectedBuiltInFormat) {
+                        backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, text)
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6 * scaleFactor
+
+                Rectangle {
+                    Layout.preferredWidth: 100 * scaleFactor
+                    Layout.preferredHeight: 32 * scaleFactor
+                    radius: 4
+                    color: (backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat) ? "#4f46e5" : "#9ca3af"
+                    border.color: color
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Add Column"
+                        color: "white"
+                        font.pixelSize: 10 * scaleFactor
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Tips: XML Data uses XML column index (0, 1, 2...). Formula should start with '=' and can use {r} and {r-1}."
+                color: "#475569"
+                font.pixelSize: 10 * scaleFactor
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 14 * scaleFactor
+                Layout.rightMargin: 14 * scaleFactor
+                Layout.topMargin: 2 * scaleFactor
+                Layout.bottomMargin: 2 * scaleFactor
+                spacing: 6 * scaleFactor
+
+                Text {
+                    Layout.preferredWidth: 48 * scaleFactor
+                    text: "Column"
+                    color: "#334155"
+                    font.pixelSize: 9 * scaleFactor
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "column") ? 1.0 : 0.0
+                }
+
+                Text {
+                    Layout.preferredWidth: 82 * scaleFactor
+                    text: "Source"
+                    color: "#334155"
+                    font.pixelSize: 9 * scaleFactor
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "source") ? 1.0 : 0.0
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Value"
+                    color: "#334155"
+                    font.pixelSize: 9 * scaleFactor
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "value") ? 1.0 : 0.0
+                }
+
+                Text {
+                    Layout.preferredWidth: 64 * scaleFactor
+                    text: "Width"
+                    color: "#334155"
+                    font.pixelSize: 9 * scaleFactor
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "width") ? 1.0 : 0.0
+                }
+
+                Item {
+                    Layout.preferredWidth: 50 * scaleFactor
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: "#f8fafc"
+                border.color: "#d1d5db"
+                border.width: 1
+                radius: 6
+                clip: true
+
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    anchors.fill: parent
+                    anchors.margins: 8 * scaleFactor
+                    spacing: 6 * scaleFactor
+                    clip: true
+                    model: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
+                        ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].columns
+                        : []
+
+                    delegate: Rectangle {
+                        property int rowIndex: index
+                        width: ListView.view.width
+                        height: 50 * scaleFactor
+                        radius: 5
+                        function applyFormulaTemplate(templateText) {
+                            valueField.text = templateText
+                            backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "value", templateText)
+                            valueField.forceActiveFocus()
+                            valueField.cursorPosition = valueField.text.length
+                        }
+                        property bool rowExpanded: (
+                            colField.activeFocus
+                            || valueField.activeFocus
+                            || widthField.activeFocus
+                            || typeCombo.activeFocus
+                            || (typeCombo.popup && typeCombo.popup.visible)
+                        )
+                        onRowExpandedChanged: {
+                            if (!rowExpanded && rootWindow.formatDesignerSelectedRowIndex === index) {
+                                rootWindow.formatDesignerSelectedRowIndex = -1
+                            }
+                            if (!rowExpanded) {
+                                rootWindow.formatEditorFocusType = ""
+                            }
+                        }
+                        color: rootWindow.formatDesignerSelectedRowIndex === index ? "#eef2ff" : "white"
+                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? "#4f46e5" : "#e5e7eb"
+                        border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 6 * scaleFactor
+                            spacing: 6 * scaleFactor
+
+                            TextField {
+                                id: colField
+                                Layout.preferredWidth: 48 * scaleFactor
+                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.fillWidth: activeFocus
+                                text: modelData.col
+                                placeholderText: ""
+                                visible: !rowExpanded || activeFocus
+                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                z: activeFocus ? 3 : 0
+                                font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
+                                background: Rectangle {
+                                    radius: 4
+                                    color: "white"
+                                    border.width: 1
+                                    border.color: colField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                }
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        rootWindow.formatEditorFocusType = "column"
+                                        cursorPosition = text.length
+                                    }
+                                }
+                                onEditingFinished: backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                onAccepted: {
+                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    focus = false
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                            }
+
+                            ComboBox {
+                                id: typeCombo
+                                Layout.preferredWidth: 82 * scaleFactor
+                                Layout.preferredHeight: (activeFocus || (popup && popup.visible)) ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.fillWidth: activeFocus || (popup && popup.visible)
+                                model: ["XML Data", "Formula", "Empty"]
+                                currentIndex: {
+                                    var t = (modelData && modelData.type) ? modelData.type : "data"
+                                    return t === "formula" ? 1 : (t === "empty" ? 2 : 0)
+                                }
+                                visible: !rowExpanded || activeFocus || (popup && popup.visible)
+                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                z: (activeFocus || (popup && popup.visible)) ? 3 : 0
+                                background: Rectangle {
+                                    radius: 4
+                                    color: "white"
+                                    border.width: 1
+                                    border.color: (typeCombo.activeFocus || (typeCombo.popup && typeCombo.popup.visible)) ? "#e91e63" : "#cbd5e1"
+                                }
+                                onActivated: function(comboIndex) {
+                                    if (formatCreatePanel.selectedFormatIndex < 0 || rowIndex < 0 || comboIndex < 0) {
+                                        return
+                                    }
+                                    var mappedType = comboIndex === 1 ? "formula" : (comboIndex === 2 ? "empty" : "data")
+                                    backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
+                                    focus = false
+                                }
+                            }
+
+                            TextField {
+                                id: valueField
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                text: modelData.value
+                                enabled: !formatCreatePanel.selectedBuiltInFormat && modelData.type !== "empty"
+                                visible: !rowExpanded || activeFocus
+                                z: activeFocus ? 3 : 0
+                                font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
+                                placeholderText: ""
+                                background: Rectangle {
+                                    radius: 4
+                                    color: "white"
+                                    border.width: 1
+                                    border.color: {
+                                        var raw = valueField.text ? valueField.text.trim() : ""
+                                        if (modelData.type === "data" && valueField.enabled && raw.length > 0 && isNaN(parseInt(raw))) {
+                                            return "#dc2626"
+                                        }
+                                        if (modelData.type === "formula" && valueField.enabled && raw.length > 0 && raw.charAt(0) !== "=") {
+                                    return "#ea580c"
+                                        }
+                                        return valueField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                    }
+                                }
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        rootWindow.formatEditorFocusType = "value"
+                                        cursorPosition = text.length
+                                    }
+                                }
+                                onEditingFinished: backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                onAccepted: {
+                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    focus = false
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                            }
+
+                            Rectangle {
+                                id: formulaTemplateButton
+                                Layout.preferredWidth: 34 * scaleFactor
+                                Layout.preferredHeight: 32 * scaleFactor
+                                radius: 4
+                                color: "#f8fafc"
+                                border.width: 1
+                                border.color: "#cbd5e1"
+                                visible: !formatCreatePanel.selectedBuiltInFormat
+                                         && modelData.type === "formula"
+                                         && valueField.activeFocus
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "fx"
+                                    color: "#334155"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        formulaTemplateMenu.x = formulaTemplateButton.mapToItem(rootWindow.contentItem, 0, formulaTemplateButton.height).x
+                                        formulaTemplateMenu.y = formulaTemplateButton.mapToItem(rootWindow.contentItem, 0, formulaTemplateButton.height).y
+                                        formulaTemplateMenu.open()
+                                    }
+                                }
+
+                                Menu {
+                                    id: formulaTemplateMenu
+
+                                    MenuItem {
+                                        text: "=C{r}*280"
+                                        onTriggered: applyFormulaTemplate("=C{r}*280")
+                                    }
+                                    MenuItem {
+                                        text: "=(E{r}-E{r-1})*280/1000"
+                                        onTriggered: applyFormulaTemplate("=(E{r}-E{r-1})*280/1000")
+                                    }
+                                    MenuItem {
+                                        text: "=(E{r}-E{r-1})*1400/1000"
+                                        onTriggered: applyFormulaTemplate("=(E{r}-E{r-1})*1400/1000")
+                                    }
+                                }
+                            }
+
+                            TextField {
+                                id: widthField
+                                Layout.preferredWidth: 64 * scaleFactor
+                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.fillWidth: activeFocus
+                                text: String(modelData.width)
+                                placeholderText: ""
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                validator: IntValidator { bottom: 1; top: 200 }
+                                visible: !rowExpanded || activeFocus
+                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                z: activeFocus ? 3 : 0
+                                font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
+                                background: Rectangle {
+                                    radius: 4
+                                    color: "white"
+                                    border.width: 1
+                                    border.color: widthField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                }
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        rootWindow.formatEditorFocusType = "width"
+                                        cursorPosition = text.length
+                                    }
+                                }
+                                onEditingFinished: {
+                                    var raw = text.trim()
+                                    var widthValue = raw.length > 0 ? parseInt(raw) : 14
+                                    if (isNaN(widthValue)) {
+                                        widthValue = 14
+                                    }
+                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                }
+                                onAccepted: {
+                                    var raw = text.trim()
+                                    var widthValue = raw.length > 0 ? parseInt(raw) : 14
+                                    if (isNaN(widthValue)) {
+                                        widthValue = 14
+                                    }
+                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    focus = false
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                            }
+
+                            Rectangle {
+                                visible: !formatCreatePanel.selectedBuiltInFormat && !rowExpanded
+                                Layout.preferredWidth: 50 * scaleFactor
+                                Layout.preferredHeight: 32 * scaleFactor
+                                radius: 4
+                                color: "#dc2626"
+                                border.color: "#dc2626"
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Delete"
+                                    color: "white"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
+                                }
+                            }
+                        }
+
+                        TapHandler {
+                            onTapped: {
+                                if (rowExpanded) {
+                                    rootWindow.formatDesignerSelectedRowIndex = index
+                                } else {
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6 * scaleFactor
+
+                Rectangle {
+                    visible: !formatCreatePanel.selectedBuiltInFormat
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 38 * scaleFactor
+                    radius: 5
+                    color: "#0f766e"
+                    border.color: "#0f766e"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Save Formats"
+                        color: "white"
+                        font.pixelSize: 12 * scaleFactor
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, formatNameField.text)
+                            backend.saveFormatByName(rootWindow.formatDesignerSelectedFormatIndex)
+                            backend.commitFormatEdit()
+                            processState = "formatDesigner"
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 38 * scaleFactor
+                    radius: 5
+                    color: "#ffffff"
+                    border.color: "#4f46e5"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Back To List"
+                        color: "#4338ca"
+                        font.pixelSize: 12 * scaleFactor
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (formatCreatePanel.selectedBuiltInFormat) {
+                                backend.cancelFormatEdit()
+                                processState = "formatDesigner"
+                            } else if (backend.confirmDiscardFormatEdit()) {
+                                backend.cancelFormatEdit()
+                                processState = "formatDesigner"
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -859,6 +1584,7 @@ Window {
                             id: allBatchSaveDirField
                             Layout.fillWidth: true
                             text: (batchOutputs && batchOutputs.length > 0) ? batchOutputs[0].saveDir : ""
+                            property string dirValidationError: validateBatchSaveDir(text)
                             readOnly: true
                             selectionColor: "#c7d2fe"
                             color: "#111827"
@@ -866,7 +1592,7 @@ Window {
                             background: Rectangle {
                                 radius: 4
                                 color: "#f8fafc"
-                                border.color: "#d1d5db"
+                                border.color: allBatchSaveDirField.dirValidationError.length > 0 ? "#dc2626" : "#d1d5db"
                                 border.width: 1
                             }
                             onAccepted: {
@@ -875,6 +1601,16 @@ Window {
                                     backend.applyBatchOutputDirectoryToAll(path)
                                 }
                             }
+                        }
+
+                        Text {
+                            text: allBatchSaveDirField.dirValidationError
+                            visible: allBatchSaveDirField.dirValidationError.length > 0
+                            color: "#dc2626"
+                            font.pixelSize: 10 * scaleFactor
+                            font.bold: true
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
                         }
                     }
 
@@ -1066,8 +1802,10 @@ Window {
                                     }
 
                                     TextField {
+                                        id: outputSaveDirField
                                         Layout.fillWidth: true
                                         text: modelData.saveDir
+                                        property string dirValidationError: validateBatchSaveDir(text)
                                         readOnly: true
                                         selectionColor: "#c7d2fe"
                                         color: "#111827"
@@ -1075,11 +1813,21 @@ Window {
                                         background: Rectangle {
                                             radius: 4
                                             color: "#f8fafc"
-                                            border.color: "#d1d5db"
+                                            border.color: outputSaveDirField.dirValidationError.length > 0 ? "#dc2626" : "#d1d5db"
                                             border.width: 1
                                         }
                                         onTextEdited: backend.updateBatchOutputDirectory(index, text)
                                         onEditingFinished: backend.updateBatchOutputDirectory(index, text)
+                                    }
+
+                                    Text {
+                                        text: outputSaveDirField.dirValidationError
+                                        visible: outputSaveDirField.dirValidationError.length > 0
+                                        color: "#dc2626"
+                                        font.pixelSize: 10 * scaleFactor
+                                        font.bold: true
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.Wrap
                                     }
                                 }
 
@@ -1152,11 +1900,11 @@ Window {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40 * scaleFactor
-                        color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel())
+                        color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel())
                             ? (confirmActionArea.pressed ? "#4338ca" : (confirmActionArea.containsMouse ? "#5b52ea" : "#4f46e5"))
                             : "#cccccc"
                         radius: 5
-                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel()) ? "#4f46e5" : "#cccccc"
+                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()) ? "#4f46e5" : "#cccccc"
                         border.width: 1
 
                         Text {
@@ -1170,7 +1918,7 @@ Window {
                         MouseArea {
                             id: confirmActionArea
                             anchors.fill: parent
-                            enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel()
+                            enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()
                             hoverEnabled: true
                             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: backend.saveAllBatchOutputs()
@@ -1227,7 +1975,7 @@ Window {
     }
 
     Item {
-        visible: compactHeaderMode && processState !== "converting"
+        visible: compactHeaderMode && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.topMargin: 12 * scaleFactor
@@ -1289,7 +2037,7 @@ Window {
 
     Item {
         id: backButton
-        visible: processState === "batchReview"
+        visible: processState === "batchReview" || processState === "selecting"
         z: 100
         width: 36 * scaleFactor
         height: 36 * scaleFactor
@@ -1312,7 +2060,11 @@ Window {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-                backend.convertAnotherFile()
+                if (processState === "selecting") {
+                    backend.selectDifferentFile()
+                } else {
+                    backend.convertAnotherFile()
+                }
             }
         }
     }
