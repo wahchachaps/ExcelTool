@@ -12,6 +12,40 @@ def ensure_xlsx_extension(file_name):
         return "output.xlsx"
     return file_name if file_name.lower().endswith(".xlsx") else f"{file_name}.xlsx"
 
+def normalize_batch_output_name(file_name):
+    raw_name = (file_name or "").strip()
+    if not raw_name:
+        return ""
+    if raw_name.lower().endswith(".xlsx"):
+        raw_name = raw_name[:-5]
+    elif raw_name.lower().endswith(".xls"):
+        raw_name = raw_name[:-4]
+    raw_name = raw_name.strip()
+    if not raw_name:
+        return ""
+    return f"{raw_name}.xlsx"
+
+def get_invalid_batch_name_message(file_name):
+    raw_name = (file_name or "").strip()
+    if raw_name.lower().endswith(".xlsx"):
+        raw_name = raw_name[:-5]
+    elif raw_name.lower().endswith(".xls"):
+        raw_name = raw_name[:-4]
+    base_name = raw_name.strip()
+    if not base_name:
+        return "File name cannot be empty."
+    invalid_chars = '<>:"/\\|?*'
+    bad = sorted(set(ch for ch in base_name if ch in invalid_chars or ord(ch) < 32))
+    if bad:
+        return (
+            f"Invalid character(s): {' '.join(bad)}. "
+            "Use letters, numbers, spaces, '-', '_', '(', ')', '.'.\n"
+            "Not allowed: < > : \" / \\ | ? *"
+        )
+    if base_name.endswith(".") or base_name.endswith(" "):
+        return "File name cannot end with a dot or space."
+    return ""
+
 
 def build_default_batch_output_path(xml_file):
     source_dir = os.path.dirname(xml_file)
@@ -798,7 +832,7 @@ class Backend(QObject):
     def updateBatchOutputFileName(self, index, file_name):
         if index < 0 or index >= len(self.batch_outputs):
             return
-        safe_name = ensure_xlsx_extension(file_name.strip())
+        safe_name = normalize_batch_output_name(file_name)
         self.batch_outputs[index]["fileName"] = safe_name
         self.batch_outputs[index]["savePath"] = os.path.join(self.batch_outputs[index]["saveDir"], safe_name)
         self.refreshBatchOutputsProperty()
@@ -847,6 +881,22 @@ class Backend(QObject):
     @pyqtSlot()
     def saveAllBatchOutputs(self):
         if not self.batch_results or not self.batch_outputs:
+            return
+        issues = []
+        for i, output in enumerate(self.batch_outputs):
+            reason = get_invalid_batch_name_message(output.get("fileName", ""))
+            if reason:
+                src = output.get("sourceFile", f"Item {i + 1}")
+                issues.append(f"{i + 1}. {src}: {reason}")
+        if issues:
+            suffix = "" if len(issues) <= 8 else f"\n...and {len(issues) - 8} more issue(s)"
+            QMessageBox.warning(
+                None,
+                "Invalid Output File Name",
+                "Please fix these file name issues before confirming:\n\n"
+                + "\n".join(issues[:8])
+                + suffix
+            )
             return
         target_paths = [
             os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))

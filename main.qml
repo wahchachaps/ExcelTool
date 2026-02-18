@@ -20,7 +20,12 @@ Window {
     minimumHeight: 500
     title: "ExcelTool"
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
-    onProcessStateChanged: requestActivate()
+    onProcessStateChanged: {
+        requestActivate()
+        if (processState !== "batchReview") {
+            batchFileNameDrafts = ({})
+        }
+    }
 
     property string processState: "idle"
     property string selectedFile: ""
@@ -34,6 +39,7 @@ Window {
     property int totalBatchFiles: 0
     property string currentFileName: ""
     property var batchOutputs: []
+    property var batchFileNameDrafts: ({})
 
 
     property real scaleFactor: Math.min(width / 400, height / 500)
@@ -72,6 +78,39 @@ Window {
         var normalized = String(path).replace(/\\/g, "/")
         var parts = normalized.split("/")
         return parts.length ? parts[parts.length - 1] : normalized
+    }
+
+    function stripXlsx(name) {
+        var value = String(name || "")
+        return value.replace(/\.xlsx$/i, "")
+    }
+
+    function validateBatchBaseName(name) {
+        var value = String(name || "").trim()
+        if (value.length === 0) {
+            return "File name cannot be empty."
+        }
+        if (/[<>:\"\/\\|?*\x00-\x1F]/.test(value)) {
+            return "Use letters, numbers, spaces, '-', '_', '(', ')', '.'.\nNot allowed: < > : \" / \\ | ? *"
+        }
+        if (/[. ]$/.test(value)) {
+            return "File name cannot end with a dot or space."
+        }
+        return ""
+    }
+
+    function hasInvalidBatchNamesInModel() {
+        if (!batchOutputs) {
+            return false
+        }
+        for (var i = 0; i < batchOutputs.length; i++) {
+            var draftName = batchFileNameDrafts[i]
+            var baseNameToCheck = draftName !== undefined ? draftName : stripXlsx(batchOutputs[i].fileName)
+            if (validateBatchBaseName(baseNameToCheck).length > 0) {
+                return true
+            }
+        }
+        return false
     }
 
     function batchFilesDescription() {
@@ -740,9 +779,13 @@ Window {
 
         ColumnLayout {
             visible: processState === "batchReview"
-            spacing: 10 * scaleFactor
+            spacing: 12 * scaleFactor
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.leftMargin: 8 * scaleFactor
+            Layout.rightMargin: 8 * scaleFactor
+            Layout.topMargin: 4 * scaleFactor
+            Layout.bottomMargin: 6 * scaleFactor
 
             Text {
                 text: "ExcelTool"
@@ -763,6 +806,7 @@ Window {
                 text: "Set one folder for all files, or edit per-file paths."
                 color: "#8a8a8a"
                 font.pixelSize: 11 * scaleFactor
+                Layout.fillWidth: true
                 wrapMode: Text.Wrap
             }
 
@@ -775,20 +819,21 @@ Window {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 86 * scaleFactor
+                Layout.preferredHeight: commonBatchDirLayout.implicitHeight + (12 * scaleFactor)
                 color: "#eef2ff"
                 border.color: "#d1d5db"
                 border.width: 1
                 radius: 5
-                clip: true
+                clip: false
 
                 ColumnLayout {
+                    id: commonBatchDirLayout
                     anchors.fill: parent
                     anchors.margins: 6 * scaleFactor
                     spacing: 6 * scaleFactor
 
                     Text {
-                        text: "Folder path for all output files"
+                        text: "Batch Save Folder"
                         color: "#475569"
                         font.pixelSize: 10 * scaleFactor
                         font.bold: true
@@ -799,15 +844,36 @@ Window {
                         Layout.fillWidth: true
                         spacing: 6 * scaleFactor
 
-                    TextField {
-                        id: allBatchSaveDirField
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        placeholderText: "Folder path for all output files"
-                        text: (batchOutputs && batchOutputs.length > 0) ? batchOutputs[0].saveDir : ""
-                        onAccepted: {
-                            var path = text.trim()
-                            if (path.length > 0) {
-                                backend.applyBatchOutputDirectoryToAll(path)
+                        spacing: 2 * scaleFactor
+
+                        Text {
+                            text: "Save Folder"
+                            color: "#475569"
+                            font.pixelSize: 10 * scaleFactor
+                            font.bold: true
+                        }
+
+                        TextField {
+                            id: allBatchSaveDirField
+                            Layout.fillWidth: true
+                            text: (batchOutputs && batchOutputs.length > 0) ? batchOutputs[0].saveDir : ""
+                            readOnly: true
+                            selectionColor: "#c7d2fe"
+                            color: "#111827"
+                            selectedTextColor: "#111827"
+                            background: Rectangle {
+                                radius: 4
+                                color: "#f8fafc"
+                                border.color: "#d1d5db"
+                                border.width: 1
+                            }
+                            onAccepted: {
+                                var path = text.trim()
+                                if (path.length > 0) {
+                                    backend.applyBatchOutputDirectoryToAll(path)
+                                }
                             }
                         }
                     }
@@ -815,6 +881,7 @@ Window {
                     Rectangle {
                         Layout.preferredWidth: 64 * scaleFactor
                         Layout.preferredHeight: 30 * scaleFactor
+                        Layout.alignment: Qt.AlignBottom
                         radius: 5
                         color: "#4f46e5"
                         border.color: "#4f46e5"
@@ -838,6 +905,7 @@ Window {
                     Rectangle {
                         Layout.preferredWidth: 76 * scaleFactor
                         Layout.preferredHeight: 30 * scaleFactor
+                        Layout.alignment: Qt.AlignBottom
                         radius: 5
                         color: allBatchSaveDirField.text.trim().length > 0 ? "#2563eb" : "#9ca3af"
                         border.color: color
@@ -865,7 +933,7 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 300 * scaleFactor
+                Layout.minimumHeight: 0
                 color: "#f8fafc"
                 border.color: "#dddddd"
                 border.width: 1
@@ -901,29 +969,124 @@ Window {
                                 wrapMode: Text.Wrap
                             }
 
-                            TextField {
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                text: modelData.fileName
-                                placeholderText: "Output file name (.xlsx)"
-                                onTextEdited: backend.updateBatchOutputFileName(index, text)
-                                onEditingFinished: backend.updateBatchOutputFileName(index, text)
+                                spacing: 2 * scaleFactor
+
+                                Text {
+                                    text: "Output File Name"
+                                    color: "#475569"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6 * scaleFactor
+
+                                    TextField {
+                                        id: outputFileNameField
+                                        Layout.fillWidth: true
+                                        text: stripXlsx(modelData.fileName)
+                                        property string validationError: validateBatchBaseName(text)
+                                        selectionColor: "#c7d2fe"
+                                        color: "#111827"
+                                        selectedTextColor: "#111827"
+                                        background: Rectangle {
+                                            radius: 4
+                                            color: "white"
+                                            border.color: outputFileNameField.validationError.length > 0 ? "#dc2626" : "#d1d5db"
+                                            border.width: 1
+                                        }
+                                        onTextEdited: {
+                                            validationError = validateBatchBaseName(text)
+                                            batchFileNameDrafts[index] = text
+                                            batchFileNameDrafts = Object.assign({}, batchFileNameDrafts)
+                                        }
+                                        onEditingFinished: {
+                                            batchFileNameDrafts[index] = text
+                                            batchFileNameDrafts = Object.assign({}, batchFileNameDrafts)
+                                            backend.updateBatchOutputFileName(index, text + "." + extCombo.currentText)
+                                        }
+                                    }
+
+                                    ComboBox {
+                                        id: extCombo
+                                        Layout.preferredWidth: 86 * scaleFactor
+                                        Layout.preferredHeight: 32 * scaleFactor
+                                        model: ["xlsx"]
+                                        currentIndex: 0
+
+                                        background: Rectangle {
+                                            radius: 4
+                                            color: "#ffffff"
+                                            border.color: "#d1d5db"
+                                            border.width: 1
+                                        }
+
+                                        contentItem: Text {
+                                            text: extCombo.currentText
+                                            color: "#111827"
+                                            font.pixelSize: 11 * scaleFactor
+                                            verticalAlignment: Text.AlignVCenter
+                                            leftPadding: 10 * scaleFactor
+                                            rightPadding: 6 * scaleFactor
+                                        }
+
+                                        onCurrentTextChanged: {
+                                            backend.updateBatchOutputFileName(index, stripXlsx(modelData.fileName) + "." + currentText)
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: outputFileNameField.validationError
+                                    visible: outputFileNameField.validationError.length > 0
+                                    color: "#dc2626"
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.Wrap
+                                }
                             }
 
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 6 * scaleFactor
 
-                                TextField {
+                                ColumnLayout {
                                     Layout.fillWidth: true
-                                    text: modelData.saveDir
-                                    placeholderText: "Save folder path"
-                                    onTextEdited: backend.updateBatchOutputDirectory(index, text)
-                                    onEditingFinished: backend.updateBatchOutputDirectory(index, text)
+                                    spacing: 2 * scaleFactor
+
+                                    Text {
+                                        text: "Save Folder"
+                                        color: "#475569"
+                                        font.pixelSize: 10 * scaleFactor
+                                        font.bold: true
+                                    }
+
+                                    TextField {
+                                        Layout.fillWidth: true
+                                        text: modelData.saveDir
+                                        readOnly: true
+                                        selectionColor: "#c7d2fe"
+                                        color: "#111827"
+                                        selectedTextColor: "#111827"
+                                        background: Rectangle {
+                                            radius: 4
+                                            color: "#f8fafc"
+                                            border.color: "#d1d5db"
+                                            border.width: 1
+                                        }
+                                        onTextEdited: backend.updateBatchOutputDirectory(index, text)
+                                        onEditingFinished: backend.updateBatchOutputDirectory(index, text)
+                                    }
                                 }
 
                                 Rectangle {
                                     Layout.preferredWidth: 70 * scaleFactor
                                     Layout.preferredHeight: 32 * scaleFactor
+                                    Layout.alignment: Qt.AlignBottom
                                     radius: 5
                                     color: "#4f46e5"
                                     border.color: "#4f46e5"
@@ -953,27 +1116,66 @@ Window {
                 }
             }
 
-            Rectangle {
+            Item {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 38 * scaleFactor
-                color: batchOutputs.length > 0 ? "#4f46e5" : "#cccccc"
-                radius: 5
-                border.color: "#4f46e5"
-                border.width: 1
+                Layout.preferredHeight: 40 * scaleFactor
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "Save All (" + batchOutputs.length + ")"
-                    color: "white"
-                    font.pixelSize: 13 * scaleFactor
-                    font.bold: true
-                }
-
-                MouseArea {
+                RowLayout {
                     anchors.fill: parent
-                    enabled: batchOutputs.length > 0
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: backend.saveAllBatchOutputs()
+                    spacing: 8 * scaleFactor
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40 * scaleFactor
+                        radius: 5
+                        color: backActionArea.pressed ? "#eef2ff" : (backActionArea.containsMouse ? "#f8faff" : "white")
+                        border.color: "#4f46e5"
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Back"
+                            color: "#4338ca"
+                            font.pixelSize: 13 * scaleFactor
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: backActionArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: backend.convertAnotherFile()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40 * scaleFactor
+                        color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel())
+                            ? (confirmActionArea.pressed ? "#4338ca" : (confirmActionArea.containsMouse ? "#5b52ea" : "#4f46e5"))
+                            : "#cccccc"
+                        radius: 5
+                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel()) ? "#4f46e5" : "#cccccc"
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Confirm"
+                            color: "white"
+                            font.pixelSize: 13 * scaleFactor
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: confirmActionArea
+                            anchors.fill: parent
+                            enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel()
+                            hoverEnabled: true
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: backend.saveAllBatchOutputs()
+                        }
+                    }
                 }
             }
         }
@@ -1085,25 +1287,21 @@ Window {
         }
     }
 
-    Rectangle {
+    Item {
         id: backButton
         visible: processState === "batchReview"
         z: 100
         width: 36 * scaleFactor
         height: 36 * scaleFactor
-        radius: width / 2
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.leftMargin: 12 * scaleFactor
         anchors.topMargin: 12 * scaleFactor
-        color: backButtonArea.pressed ? "#3f36bd" : (backButtonArea.containsMouse ? "#4f46e5" : "#4338ca")
-        border.color: "#c7d2fe"
-        border.width: 1
 
         Text {
             anchors.centerIn: parent
             text: "\u2190"
-            color: "white"
+            color: backButtonArea.pressed ? "#3730a3" : (backButtonArea.containsMouse ? "#4f46e5" : "#4338ca")
             font.pixelSize: 18 * scaleFactor
             font.bold: true
         }
