@@ -146,6 +146,23 @@ Window {
         }).join("\n")
     }
 
+    function clearFormatCreateEditorFocus() {
+        if (processState !== "formatCreate") {
+            return
+        }
+        var focusedItem = activeFocusItem
+        if (focusedItem && focusedItem !== rootWindow && focusedItem.focus !== undefined) {
+            focusedItem.focus = false
+        }
+        formatEditorFocusType = ""
+        formatDesignerSelectedRowIndex = -1
+        if (contentItem) {
+            contentItem.forceActiveFocus(Qt.ShortcutFocusReason)
+        } else {
+            forceActiveFocus(Qt.ShortcutFocusReason)
+        }
+    }
+
     onSelectionTypeChanged: {
         if (selectionType === "") {
             if (typeComboBox.currentIndex !== -1) {
@@ -284,7 +301,7 @@ Window {
             Layout.fillWidth: true
             Layout.preferredHeight: 165 * scaleFactor
             color: "#f0f0f0"
-            border.color: dropArea.containsDrag ? "#4f46e5" : "#cccccc"
+            border.color: dropArea.containsDrag ? "#2563eb" : "#cccccc"
             border.width: dropArea.containsDrag ? 3 : 2
             radius: 10
             visible: processState === "idle"
@@ -336,7 +353,7 @@ Window {
             Rectangle {
                 anchors.fill: parent
                 color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")
-                border.color: dropArea.containsDrag ? "#4f46e5" : (parent.hovered ? "#4f46e5" : "#cccccc")
+                border.color: dropArea.containsDrag ? "#2563eb" : (parent.hovered ? "#2563eb" : "#cccccc")
                 border.width: dropArea.containsDrag ? 3 : (parent.hovered ? 2 : 2)
                 radius: 10
                 opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)
@@ -387,9 +404,9 @@ Window {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 35 * scaleFactor
-            color: "#0f766e"
+            color: "#2563eb"
             radius: 5
-            border.color: "#0f766e"
+            border.color: "#2563eb"
             border.width: 1
             visible: processState === "idle"
 
@@ -588,7 +605,7 @@ Window {
                     }
                     background: Rectangle {
                         color: highlighted ? "#e0e7ff" : "transparent"
-                        border.color: highlighted ? "#4f46e5" : "transparent"
+                        border.color: highlighted ? "#2563eb" : "transparent"
                         border.width: 1
                     }
                 }
@@ -645,9 +662,9 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 35 * scaleFactor
-                color: selectionType !== "" ? "#4f46e5" : "#cccccc"
+                color: selectionType !== "" ? "#2563eb" : "#cccccc"
                 radius: 5
-                border.color: "#4f46e5"
+                border.color: "#2563eb"
                 border.width: 1
 
                 Text {
@@ -675,9 +692,9 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 35 * scaleFactor
-                color: "#4f46e5"
+                color: "#2563eb"
                 radius: 5
-                border.color: "#4f46e5"
+                border.color: "#2563eb"
                 border.width: 1
 
                 Text {
@@ -719,7 +736,7 @@ Window {
 
             Text {
                 text: "Create Format"
-                color: "#4f46e5"
+                color: "#2563eb"
                 font.pixelSize: 12 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -758,7 +775,7 @@ Window {
                         radius: 5
                         property bool isBuiltInFormat: (modelData.name === "Den" || modelData.name === "Glacier" || modelData.name === "Globe")
                         color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#eef2ff" : "white"
-                        border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#4f46e5" : "#e5e7eb"
+                        border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#2563eb" : "#e5e7eb"
                         border.width: 1
 
                         RowLayout {
@@ -779,8 +796,8 @@ Window {
                                 Layout.preferredWidth: 56 * scaleFactor
                                 Layout.preferredHeight: 28 * scaleFactor
                                 radius: 4
-                                color: "#4f46e5"
-                                border.color: "#4f46e5"
+                                color: "#2563eb"
+                                border.color: "#2563eb"
                                 border.width: 1
 
                                 Text {
@@ -837,7 +854,7 @@ Window {
             Text {
                 Layout.fillWidth: true
                 text: backend.formatDesignerStatus
-                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : "#0f766e"
+                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : "#2563eb"
                 font.pixelSize: 10 * scaleFactor
                 wrapMode: Text.Wrap
                 visible: backend.formatDesignerStatus.length > 0
@@ -847,8 +864,8 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38 * scaleFactor
                 radius: 5
-                color: "#0f766e"
-                border.color: "#0f766e"
+                color: "#2563eb"
+                border.color: "#2563eb"
                 border.width: 1
 
                 Text {
@@ -871,13 +888,13 @@ Window {
                 Layout.preferredHeight: 36 * scaleFactor
                 radius: 5
                 color: "#ffffff"
-                border.color: "#4f46e5"
+                border.color: "#2563eb"
                 border.width: 1
 
                 Text {
                     anchors.centerIn: parent
                     text: "Back"
-                    color: "#4338ca"
+                    color: "#1d4ed8"
                     font.pixelSize: 12 * scaleFactor
                     font.bold: true
                 }
@@ -906,6 +923,13 @@ Window {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
+            Shortcut {
+                sequence: "Esc"
+                enabled: formatCreatePanel.visible
+                context: Qt.WindowShortcut
+                onActivated: rootWindow.clearFormatCreateEditorFocus()
+            }
+
             Text {
                 text: formatCreatePanel.selectedBuiltInFormat ? "View Format" : "Create Format"
                 font.pixelSize: 22 * scaleFactor
@@ -926,6 +950,11 @@ Window {
                         backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, text)
                     }
                 }
+                Keys.onEscapePressed: function(event) {
+                    focus = false
+                    rootWindow.clearFormatCreateEditorFocus()
+                    event.accepted = true
+                }
             }
 
             RowLayout {
@@ -936,7 +965,7 @@ Window {
                     Layout.preferredWidth: 100 * scaleFactor
                     Layout.preferredHeight: 32 * scaleFactor
                     radius: 4
-                    color: (backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat) ? "#4f46e5" : "#9ca3af"
+                    color: (backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat) ? "#2563eb" : "#9ca3af"
                     border.color: color
                     border.width: 1
 
@@ -1069,7 +1098,7 @@ Window {
                             }
                         }
                         color: rootWindow.formatDesignerSelectedRowIndex === index ? "#eef2ff" : "white"
-                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? "#4f46e5" : "#e5e7eb"
+                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? "#2563eb" : "#e5e7eb"
                         border.width: 1
 
                         RowLayout {
@@ -1106,6 +1135,11 @@ Window {
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
                                 }
+                                Keys.onEscapePressed: function(event) {
+                                    focus = false
+                                    rootWindow.clearFormatCreateEditorFocus()
+                                    event.accepted = true
+                                }
                             }
 
                             ComboBox {
@@ -1134,6 +1168,14 @@ Window {
                                     var mappedType = comboIndex === 1 ? "formula" : (comboIndex === 2 ? "empty" : "data")
                                     backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
                                     focus = false
+                                }
+                                Keys.onEscapePressed: function(event) {
+                                    if (popup && popup.visible) {
+                                        popup.close()
+                                    }
+                                    focus = false
+                                    rootWindow.clearFormatCreateEditorFocus()
+                                    event.accepted = true
                                 }
                             }
 
@@ -1173,6 +1215,11 @@ Window {
                                     backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                                Keys.onEscapePressed: function(event) {
+                                    focus = false
+                                    rootWindow.clearFormatCreateEditorFocus()
+                                    event.accepted = true
                                 }
                             }
 
@@ -1267,6 +1314,11 @@ Window {
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
                                 }
+                                Keys.onEscapePressed: function(event) {
+                                    focus = false
+                                    rootWindow.clearFormatCreateEditorFocus()
+                                    event.accepted = true
+                                }
                             }
 
                             Rectangle {
@@ -1316,8 +1368,8 @@ Window {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38 * scaleFactor
                     radius: 5
-                    color: "#0f766e"
-                    border.color: "#0f766e"
+                    color: "#2563eb"
+                    border.color: "#2563eb"
                     border.width: 1
 
                     Text {
@@ -1345,13 +1397,13 @@ Window {
                     Layout.preferredHeight: 38 * scaleFactor
                     radius: 5
                     color: "#ffffff"
-                    border.color: "#4f46e5"
+                    border.color: "#2563eb"
                     border.width: 1
 
                     Text {
                         anchors.centerIn: parent
                         text: "Back To List"
-                        color: "#4338ca"
+                        color: "#1d4ed8"
                         font.pixelSize: 12 * scaleFactor
                         font.bold: true
                     }
@@ -1468,7 +1520,7 @@ Window {
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: "#4f46e5"
+                Material.accent: "#2563eb"
             }
         }
 
@@ -1498,7 +1550,7 @@ Window {
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: "#4f46e5"
+                Material.accent: "#2563eb"
             }
         }
 
@@ -1586,7 +1638,7 @@ Window {
                             text: (batchOutputs && batchOutputs.length > 0) ? batchOutputs[0].saveDir : ""
                             property string dirValidationError: validateBatchSaveDir(text)
                             readOnly: true
-                            selectionColor: "#c7d2fe"
+                            selectionColor: "#bfdbfe"
                             color: "#111827"
                             selectedTextColor: "#111827"
                             background: Rectangle {
@@ -1619,8 +1671,8 @@ Window {
                         Layout.preferredHeight: 30 * scaleFactor
                         Layout.alignment: Qt.AlignBottom
                         radius: 5
-                        color: "#4f46e5"
-                        border.color: "#4f46e5"
+                        color: "#2563eb"
+                        border.color: "#2563eb"
                         border.width: 1
 
                         Text {
@@ -1725,7 +1777,7 @@ Window {
                                         Layout.fillWidth: true
                                         text: stripXlsx(modelData.fileName)
                                         property string validationError: validateBatchBaseName(text)
-                                        selectionColor: "#c7d2fe"
+                                        selectionColor: "#bfdbfe"
                                         color: "#111827"
                                         selectedTextColor: "#111827"
                                         background: Rectangle {
@@ -1807,7 +1859,7 @@ Window {
                                         text: modelData.saveDir
                                         property string dirValidationError: validateBatchSaveDir(text)
                                         readOnly: true
-                                        selectionColor: "#c7d2fe"
+                                        selectionColor: "#bfdbfe"
                                         color: "#111827"
                                         selectedTextColor: "#111827"
                                         background: Rectangle {
@@ -1836,8 +1888,8 @@ Window {
                                     Layout.preferredHeight: 32 * scaleFactor
                                     Layout.alignment: Qt.AlignBottom
                                     radius: 5
-                                    color: "#4f46e5"
-                                    border.color: "#4f46e5"
+                                    color: "#2563eb"
+                                    border.color: "#2563eb"
                                     border.width: 1
 
                                     Text {
@@ -1877,13 +1929,13 @@ Window {
                         Layout.preferredHeight: 40 * scaleFactor
                         radius: 5
                         color: backActionArea.pressed ? "#eef2ff" : (backActionArea.containsMouse ? "#f8faff" : "white")
-                        border.color: "#4f46e5"
+                        border.color: "#2563eb"
                         border.width: 1
 
                         Text {
                             anchors.centerIn: parent
                             text: "Back"
-                            color: "#4338ca"
+                            color: "#1d4ed8"
                             font.pixelSize: 13 * scaleFactor
                             font.bold: true
                         }
@@ -1901,10 +1953,10 @@ Window {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40 * scaleFactor
                         color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel())
-                            ? (confirmActionArea.pressed ? "#4338ca" : (confirmActionArea.containsMouse ? "#5b52ea" : "#4f46e5"))
+                            ? (confirmActionArea.pressed ? "#1d4ed8" : (confirmActionArea.containsMouse ? "#3b82f6" : "#2563eb"))
                             : "#cccccc"
                         radius: 5
-                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()) ? "#4f46e5" : "#cccccc"
+                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()) ? "#2563eb" : "#cccccc"
                         border.width: 1
 
                         Text {
@@ -1951,9 +2003,9 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40 * scaleFactor
-                color: "#4f46e5"
+                color: "#2563eb"
                 radius: 5
-                border.color: "#4f46e5"
+                border.color: "#2563eb"
                 border.width: 1
 
                 Text {
@@ -2049,7 +2101,7 @@ Window {
         Text {
             anchors.centerIn: parent
             text: "\u2190"
-            color: backButtonArea.pressed ? "#3730a3" : (backButtonArea.containsMouse ? "#4f46e5" : "#4338ca")
+            color: backButtonArea.pressed ? "#1e40af" : (backButtonArea.containsMouse ? "#2563eb" : "#1d4ed8")
             font.pixelSize: 18 * scaleFactor
             font.bold: true
         }
