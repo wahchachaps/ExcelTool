@@ -1,4 +1,4 @@
-/*
+﻿/*
 This is a UI file (.ui.qml) that is intended to be edited in Qt Design Studio only.
 It is supposed to be strictly declarative and only uses a subset of QML. If you edit
 this file manually, you might introduce QML code that is not supported by Qt Design Studio.
@@ -10,6 +10,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Window
 import QtMultimedia
+import "controls"
 
 Window {
     id: rootWindow
@@ -19,7 +20,16 @@ Window {
     maximumHeight: 600
     minimumWidth: 400
     minimumHeight: 500
-    title: "ExcelTool"
+    title: "CubeFlow"
+    color: "#2b2b36"
+    property color themeBg: "#2b2b36"
+    property color themePanel: "#3d3d4d"
+    property color themeLayer1: "#52525e"
+    property color themeLayer2: "#6b6b7a"
+    property color themeLayer3: "#7d7d8a"
+    property color themeText: "white"
+    property color themeTextSecondary: "#b8b8c4"
+    property color themeInset: "#2b2b36"
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
     onProcessStateChanged: {
         requestActivate()
@@ -48,6 +58,8 @@ Window {
     property int formatDesignerSelectedFormatIndex: 0
     property int formatDesignerSelectedRowIndex: -1
     property string formatEditorFocusType: ""
+    property real primaryControlHeight: 38 * scaleFactor
+    property real primaryControlFontSize: 12 * scaleFactor
 
 
     property real scaleFactor: Math.min(width / 400, height / 500)
@@ -78,8 +90,8 @@ Window {
                                  : 0
     property real headerScale: Math.max(0.72, 1.0 - (0.35 * headerCompress))
     property bool compactHeaderMode: windowSizeChanged
-                                   || (processState === "selecting" && fileInfoPressure >= compactTriggerPressure)
-    property real compactGifSize: Math.max(100, 100 * scaleFactor)
+                                  || (processState === "selecting" && fileInfoPressure >= compactTriggerPressure)
+    property real compactGifSize: Math.max(130, 130 * scaleFactor)
     property real headerReservedTopSpace: (compactHeaderMode && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate") ? (compactGifSize + (20 * scaleFactor)) : 0
 
     function baseName(path) {
@@ -238,9 +250,20 @@ Window {
                     horizontalAlignment: Text.AlignHCenter
                 }
 
-                Button {
+                PixelButton {
+                    sliceLeft: 5
+                    sliceRight: 5
+                    sliceTop: 4
+                    sliceBottom: 4
                     text: "OK"
+                    textPixelSize: 11 * scaleFactor
                     Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 90 * scaleFactor
+                    Layout.preferredHeight: 34 * scaleFactor
+                    fallbackNormal: themeLayer3
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    borderColor: themeLayer3
                     onClicked: errorDialog.close()
                 }
             }
@@ -264,35 +287,38 @@ Window {
 
             AnimatedImage {
                 id: copywriting
-                Layout.preferredWidth: 200 * scaleFactor * headerScale
-                Layout.preferredHeight: 110 * scaleFactor * headerScale
+                Layout.preferredWidth: Math.min(340 * scaleFactor * headerScale, rootWindow.width - (80 * scaleFactor))
+                Layout.preferredHeight: Math.min(200 * scaleFactor * headerScale, rootWindow.height * 0.24)
                 source: "images/copywriting.gif"
-                speed: 0.4724
+                speed: 1.0
                 fillMode: Image.PreserveAspectFit
+                transformOrigin: Item.Center
+                scale: 1.25
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
-                text: qsTr("ExcelTool")
-                font.family: "Tahoma"
+                text: qsTr("CubeFlow")
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 32 * scaleFactor * headerScale
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
-                color: "#e6000000"
+                color: "white"
                 text: "Convert your XML files with ease"
                 font.pixelSize: 16 * scaleFactor * headerScale
-                font.family: "Verdana"
+                font.family: appFontFamily
                 Layout.alignment: Qt.AlignHCenter
                 visible: !compactHeaderMode && headerCompress < 0.45
             }
 
             Text {
-                color: "#bd000000"
+                color: "white"
                 text: "by wahchachaps"
                 font.pixelSize: 12 * scaleFactor * headerScale
-                font.family: "Verdana"
+                font.family: appFontFamily
                 Layout.alignment: Qt.AlignHCenter
             }
         }
@@ -300,8 +326,8 @@ Window {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 165 * scaleFactor
-            color: "#f0f0f0"
-            border.color: dropArea.containsDrag ? "#2563eb" : "#cccccc"
+            color: themePanel
+            border.color: dropArea.containsDrag ? themeLayer3 : themeLayer2
             border.width: dropArea.containsDrag ? 3 : 2
             radius: 10
             visible: processState === "idle"
@@ -353,7 +379,7 @@ Window {
             Rectangle {
                 anchors.fill: parent
                 color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")
-                border.color: dropArea.containsDrag ? "#2563eb" : (parent.hovered ? "#2563eb" : "#cccccc")
+                border.color: dropArea.containsDrag ? themeLayer3 : (parent.hovered ? themeLayer3 : themeLayer2)
                 border.width: dropArea.containsDrag ? 3 : (parent.hovered ? 2 : 2)
                 radius: 10
                 opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)
@@ -387,6 +413,7 @@ Window {
 
                 Text {
                     text: dropArea.containsDrag ? "Drop XML file(s) or folder here" : "Click to select XML file(s)"
+                    color: "white"
                     font.pixelSize: 16 * scaleFactor
                     font.bold: true
                     Layout.alignment: Qt.AlignHCenter
@@ -394,35 +421,33 @@ Window {
 
                 Text {
                     text: "XML files only"
+                    color: "white"
                     font.pixelSize: 12 * scaleFactor
-                    color: "#666666"
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
         }
 
-        Rectangle {
+        PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
             Layout.fillWidth: true
-            Layout.preferredHeight: 35 * scaleFactor
-            color: "#2563eb"
-            radius: 5
-            border.color: "#2563eb"
-            border.width: 1
+            Layout.preferredHeight: 36 * scaleFactor
             visible: processState === "idle"
-
-            Text {
-                anchors.centerIn: parent
-                text: "Open Format Designer"
-                color: "white"
-                font.pixelSize: 12 * scaleFactor
-                font.bold: true
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: backend.openFormatDesigner()
-            }
+            text: "Open Format Designer"
+            textPixelSize: 12 * scaleFactor
+            normalSource: Qt.resolvedUrl("images/ui/button_normal.png")
+            hoverSource: Qt.resolvedUrl("images/ui/button_hover.png")
+            pressedSource: Qt.resolvedUrl("images/ui/button_pressed.png")
+            disabledSource: Qt.resolvedUrl("images/ui/button_disabled.png")
+            fallbackNormal: themeLayer3
+            fallbackHover: themeLayer2
+            fallbackPressed: themeLayer1
+            fallbackDisabled: "#9ca3af"
+            borderColor: themeLayer3
+            onClicked: backend.openFormatDesigner()
         }
 
 
@@ -436,7 +461,7 @@ Window {
                 text: selectedFiles.length + " file(s) selected"
                 font.pixelSize: 13 * scaleFactor
                 font.bold: true
-                color: "#374151"
+                color: themeText
             }
 
             Item {
@@ -450,8 +475,8 @@ Window {
                 Rectangle {
                     id: fileInfoCard
                     anchors.fill: parent
-                    color: "#f9f9f9"
-                    border.color: "#dddddd"
+                    color: themeInset
+                    border.color: themeLayer2
                     border.width: 1
                     radius: 5
                     clip: true
@@ -482,8 +507,8 @@ Window {
                                 Rectangle {
                                     width: batchFileListColumn.width
                                     height: Math.max(30 * scaleFactor, fileNameText.implicitHeight + (8 * scaleFactor))
-                                    color: "#ffffff"
-                                    border.color: "#e5e7eb"
+                                    color: themePanel
+                                    border.color: themeLayer2
                                     border.width: 1
                                     radius: 4
 
@@ -497,7 +522,7 @@ Window {
                                             Layout.fillWidth: true
                                             text: baseName(selectedFiles[index]) + " (" + backend.getFileSize(selectedFiles[index]) + ")"
                                             font.pixelSize: 12 * scaleFactor
-                                            color: "#333333"
+                                            color: themeText
                                             elide: Text.ElideMiddle
                                             verticalAlignment: Text.AlignVCenter
                                         }
@@ -508,7 +533,7 @@ Window {
                                             font.pixelSize: 11 * scaleFactor
                                             color: text === "Done" ? "#059669"
                                                   : text === "Failed" ? "#dc2626"
-                                                  : text === "Processing" ? "#2563eb"
+                                                  : text === "Processing" ? themeLayer3
                                                   : "#6b7280"
                                             horizontalAlignment: Text.AlignRight
                                             verticalAlignment: Text.AlignVCenter
@@ -543,6 +568,7 @@ Window {
                             width: parent.width
                             visible: !isBatch
                             text: "File: " + (selectedFile ? baseName(selectedFile) : "") + "\nSize: " + fileSize
+                            color: "white"
                             font.pixelSize: 13 * scaleFactor
                             wrapMode: Text.Wrap
                             elide: Text.ElideNone
@@ -556,160 +582,79 @@ Window {
 
             Text {
                 text: "Select Conversion Type"
+                color: "white"
                 font.pixelSize: 14 * scaleFactor
                 font.bold: true
             }
 
 
-            ComboBox {
+            PixelComboBox {
+                sliceLeft: 5
+                sliceRight: 5
+                sliceTop: 4
+                sliceBottom: 4
                 id: typeComboBox
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor
+                Layout.preferredHeight: primaryControlHeight
+                textPixelSize: primaryControlFontSize
+                popupTextPixelSize: 11 * scaleFactor
                 model: backend.xmlTypeOptions
                 currentIndex: -1
                 displayText: currentIndex === -1 ? "Select XML type" : currentText
+                fallbackNormal: themeInset
+                fallbackFocus: themeLayer1
+                fallbackOpen: themeLayer2
+                fallbackDisabled: themeLayer2
+                fallbackBorder: themeLayer2
+                fallbackText: themeText
+                fallbackPlaceholder: "white"
+                fallbackPopup: themePanel
                 onCurrentTextChanged: {
                     if (currentIndex >= 0 && currentText !== selectionType) {
-
-                        backend.setSelectionType(currentText);
-                    }
-                }
-
-
-                background: Rectangle {
-                    color: "#ffffff"
-                    border.color: "#cccccc"
-                    border.width: 1
-                    radius: height / 2
-                }
-
-
-                contentItem: Text {
-                    text: typeComboBox.displayText
-                    font.pixelSize: 12 * scaleFactor
-                    color: typeComboBox.currentIndex === -1 ? "#999999" : "#333333"
-                    verticalAlignment: Text.AlignVCenter
-                    leftPadding: 15
-                    rightPadding: 15
-                }
-
-
-                delegate: ItemDelegate {
-                    width: typeComboBox.width
-                    contentItem: Text {
-                        text: modelData
-                        font.pixelSize: 12 * scaleFactor
-                        color: "#333333"
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: 15
-                    }
-                    background: Rectangle {
-                        color: highlighted ? "#e0e7ff" : "transparent"
-                        border.color: highlighted ? "#2563eb" : "transparent"
-                        border.width: 1
-                    }
-                }
-
-
-                indicator: Canvas {
-                    id: canvas
-                    x: typeComboBox.width - width - typeComboBox.rightPadding
-                    y: typeComboBox.topPadding + (typeComboBox.availableHeight - height) / 2
-                    width: 10 * scaleFactor
-                    height: 6 * scaleFactor
-                    contextType: "2d"
-
-                    Connections {
-                        target: typeComboBox
-                        function onPressedChanged() { canvas.requestPaint(); }
-                    }
-
-                    onPaint: {
-                        context.reset();
-                        context.moveTo(0, 0);
-                        context.lineTo(width, 0);
-                        context.lineTo(width / 2, height);
-                        context.closePath();
-                        context.fillStyle = "#666666";
-                        context.fill();
-                    }
-                }
-
-
-                popup: Popup {
-                    y: typeComboBox.height - 1
-                    width: typeComboBox.width
-                    implicitHeight: contentItem.implicitHeight
-                    padding: 1
-
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: typeComboBox.popup.visible ? typeComboBox.delegateModel : null
-                        currentIndex: typeComboBox.highlightedIndex
-                        ScrollIndicator.vertical: ScrollIndicator { }
-                    }
-
-                    background: Rectangle {
-                        border.color: "#cccccc"
-                        color: "#ffffff"
-                        radius: 5
+                        backend.setSelectionType(currentText)
                     }
                 }
             }
 
 
-            Rectangle {
+            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor
-                color: selectionType !== "" ? "#2563eb" : "#cccccc"
-                radius: 5
-                border.color: "#2563eb"
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Confirm and Convert"
-                    color: "white"
-                    font.pixelSize: 12 * scaleFactor
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    enabled: selectionType !== ""
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: {
-                        if (typeComboBox.currentIndex >= 0) {
-                            backend.setSelectionType(typeComboBox.currentText)
-                        }
-                        backend.confirmAndConvert()
+                Layout.preferredHeight: primaryControlHeight
+                text: "Confirm and Convert"
+                textPixelSize: primaryControlFontSize
+                enabled: selectionType !== ""
+                fallbackNormal: themeLayer3
+                fallbackHover: themeLayer2
+                fallbackPressed: themeLayer1
+                fallbackDisabled: "#9ca3af"
+                borderColor: themeLayer3
+                onClicked: {
+                    if (typeComboBox.currentIndex >= 0) {
+                        backend.setSelectionType(typeComboBox.currentText)
                     }
+                    backend.confirmAndConvert()
                 }
-        }
+            }
 
 
-            Rectangle {
+            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35 * scaleFactor
-                color: "#2563eb"
-                radius: 5
-                border.color: "#2563eb"
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Select Different File"
-                    color: "white"
-                    font.pixelSize: 12 * scaleFactor
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: backend.selectFile()
-                }
+                Layout.preferredHeight: primaryControlHeight
+                text: "Select Different File"
+                textPixelSize: primaryControlFontSize
+                fallbackNormal: themeLayer3
+                fallbackHover: themeLayer2
+                fallbackPressed: themeLayer1
+                borderColor: themeLayer3
+                onClicked: backend.selectFile()
             }
         }
 
@@ -729,14 +674,14 @@ Window {
 
             Text {
                 text: "Click a format to edit it"
-                color: "#64748b"
+                color: themeText
                 font.pixelSize: 11 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Create Format"
-                color: "#2563eb"
+                color: themeLayer3
                 font.pixelSize: 12 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -756,8 +701,8 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#f8fafc"
-                border.color: "#d1d5db"
+                color: themePanel
+                border.color: themeLayer2
                 border.width: 1
                 radius: 6
                 clip: true
@@ -775,7 +720,7 @@ Window {
                         radius: 5
                         property bool isBuiltInFormat: (modelData.name === "Den" || modelData.name === "Glacier" || modelData.name === "Globe")
                         color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#eef2ff" : "white"
-                        border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#2563eb" : "#e5e7eb"
+                        border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? themeLayer3 : themeLayer2
                         border.width: 1
 
                         RowLayout {
@@ -786,64 +731,51 @@ Window {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.name
-                                color: "#111827"
+                                color: themeText
                                 font.pixelSize: 12 * scaleFactor
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
 
-                            Rectangle {
+                            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                                 Layout.preferredWidth: 56 * scaleFactor
                                 Layout.preferredHeight: 28 * scaleFactor
-                                radius: 4
-                                color: "#2563eb"
-                                border.color: "#2563eb"
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: isBuiltInFormat ? "Open" : "Edit"
-                                    color: "white"
-                                    font.pixelSize: 10 * scaleFactor
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        rootWindow.formatDesignerSelectedFormatIndex = index
-                                        rootWindow.formatDesignerSelectedRowIndex = -1
-                                        backend.beginFormatEdit(index)
-                                        processState = "formatCreate"
-                                    }
+                                text: isBuiltInFormat ? "Open" : "Edit"
+                                textPixelSize: 10 * scaleFactor
+                                fallbackNormal: themeLayer3
+                                fallbackHover: themeLayer2
+                                fallbackPressed: themeLayer1
+                                borderColor: themeLayer3
+                                onClicked: {
+                                    rootWindow.formatDesignerSelectedFormatIndex = index
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                    backend.beginFormatEdit(index)
+                                    processState = "formatCreate"
                                 }
                             }
 
-                            Rectangle {
+                            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                                 visible: !isBuiltInFormat
                                 Layout.preferredWidth: 56 * scaleFactor
                                 Layout.preferredHeight: 28 * scaleFactor
-                                radius: 4
-                                color: backend.formatModel.length > 1 ? "#dc2626" : "#9ca3af"
-                                border.color: color
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "Delete"
-                                    color: "white"
-                                    font.pixelSize: 10 * scaleFactor
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: backend.formatModel.length > 1
-                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        backend.deleteFormatDefinition(index)
-                                    }
+                                text: "Delete"
+                                textPixelSize: 10 * scaleFactor
+                                enabled: backend.formatModel.length > 1
+                                fallbackNormal: "#dc2626"
+                                fallbackHover: "#b91c1c"
+                                fallbackPressed: "#991b1b"
+                                fallbackDisabled: "#9ca3af"
+                                borderColor: "#dc2626"
+                                onClicked: {
+                                    backend.deleteFormatDefinition(index)
                                 }
                             }
                         }
@@ -854,56 +786,43 @@ Window {
             Text {
                 Layout.fillWidth: true
                 text: backend.formatDesignerStatus
-                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : "#2563eb"
+                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : themeLayer3
                 font.pixelSize: 10 * scaleFactor
                 wrapMode: Text.Wrap
                 visible: backend.formatDesignerStatus.length > 0
             }
 
-            Rectangle {
+            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38 * scaleFactor
-                radius: 5
-                color: "#2563eb"
-                border.color: "#2563eb"
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Open File"
-                    color: "white"
-                    font.pixelSize: 12 * scaleFactor
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: backend.importFormatModelFromFile()
-                }
+                text: "Open File"
+                textPixelSize: 12 * scaleFactor
+                fallbackNormal: themeLayer3
+                fallbackHover: themeLayer2
+                fallbackPressed: themeLayer1
+                borderColor: themeLayer3
+                onClicked: backend.importFormatModelFromFile()
             }
 
-            Rectangle {
+            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                 Layout.fillWidth: true
                 Layout.preferredHeight: 36 * scaleFactor
-                radius: 5
-                color: "#ffffff"
-                border.color: "#2563eb"
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Back"
-                    color: "#1d4ed8"
-                    font.pixelSize: 12 * scaleFactor
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: backend.closeFormatDesigner()
-                }
+                text: "Back"
+                textPixelSize: 12 * scaleFactor
+                fallbackNormal: themePanel
+                fallbackHover: themeLayer2
+                fallbackPressed: themeLayer1
+                textColor: themeLayer3
+                borderColor: themeLayer3
+                onClicked: backend.closeFormatDesigner()
             }
         }
 
@@ -961,35 +880,29 @@ Window {
                 Layout.fillWidth: true
                 spacing: 6 * scaleFactor
 
-                Rectangle {
+                PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                     Layout.preferredWidth: 100 * scaleFactor
                     Layout.preferredHeight: 32 * scaleFactor
-                    radius: 4
-                    color: (backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat) ? "#2563eb" : "#9ca3af"
-                    border.color: color
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Add Column"
-                        color: "white"
-                        font.pixelSize: 10 * scaleFactor
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
-                    }
+                    text: "Add Column"
+                    textPixelSize: 10 * scaleFactor
+                    enabled: backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
+                    fallbackNormal: themeLayer3
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    fallbackDisabled: "#9ca3af"
+                    borderColor: themeLayer3
+                    onClicked: backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
                 }
             }
 
             Text {
                 Layout.fillWidth: true
                 text: "Tips: XML Data uses XML column index (0, 1, 2...). Formula should start with '=' and can use {r} and {r-1}."
-                color: "#475569"
+                color: themeText
                 font.pixelSize: 10 * scaleFactor
                 wrapMode: Text.Wrap
             }
@@ -1005,7 +918,7 @@ Window {
                 Text {
                     Layout.preferredWidth: 48 * scaleFactor
                     text: "Column"
-                    color: "#334155"
+                    color: themeText
                     font.pixelSize: 9 * scaleFactor
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -1016,7 +929,7 @@ Window {
                 Text {
                     Layout.preferredWidth: 82 * scaleFactor
                     text: "Source"
-                    color: "#334155"
+                    color: themeText
                     font.pixelSize: 9 * scaleFactor
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -1027,7 +940,7 @@ Window {
                 Text {
                     Layout.fillWidth: true
                     text: "Value"
-                    color: "#334155"
+                    color: themeText
                     font.pixelSize: 9 * scaleFactor
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -1038,7 +951,7 @@ Window {
                 Text {
                     Layout.preferredWidth: 64 * scaleFactor
                     text: "Width"
-                    color: "#334155"
+                    color: themeText
                     font.pixelSize: 9 * scaleFactor
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -1054,8 +967,8 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#f8fafc"
-                border.color: "#d1d5db"
+                color: themePanel
+                border.color: themeLayer2
                 border.width: 1
                 radius: 6
                 clip: true
@@ -1098,7 +1011,7 @@ Window {
                             }
                         }
                         color: rootWindow.formatDesignerSelectedRowIndex === index ? "#eef2ff" : "white"
-                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? "#2563eb" : "#e5e7eb"
+                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer3 : themeLayer2
                         border.width: 1
 
                         RowLayout {
@@ -1121,7 +1034,7 @@ Window {
                                     radius: 4
                                     color: "white"
                                     border.width: 1
-                                    border.color: colField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                    border.color: colField.activeFocus ? "#e91e63" : themeLayer2
                                 }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
@@ -1142,11 +1055,13 @@ Window {
                                 }
                             }
 
-                            ComboBox {
+                            PixelComboBox {
                                 id: typeCombo
                                 Layout.preferredWidth: 82 * scaleFactor
                                 Layout.preferredHeight: (activeFocus || (popup && popup.visible)) ? 40 * scaleFactor : 32 * scaleFactor
                                 Layout.fillWidth: activeFocus || (popup && popup.visible)
+                                textPixelSize: (activeFocus || (popup && popup.visible)) ? 12 * scaleFactor : 11 * scaleFactor
+                                popupTextPixelSize: 11 * scaleFactor
                                 model: ["XML Data", "Formula", "Empty"]
                                 currentIndex: {
                                     var t = (modelData && modelData.type) ? modelData.type : "data"
@@ -1155,12 +1070,14 @@ Window {
                                 visible: !rowExpanded || activeFocus || (popup && popup.visible)
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: (activeFocus || (popup && popup.visible)) ? 3 : 0
-                                background: Rectangle {
-                                    radius: 4
-                                    color: "white"
-                                    border.width: 1
-                                    border.color: (typeCombo.activeFocus || (typeCombo.popup && typeCombo.popup.visible)) ? "#e91e63" : "#cbd5e1"
-                                }
+                                fallbackNormal: themeInset
+                                fallbackFocus: themeLayer1
+                                fallbackOpen: themeLayer2
+                                fallbackDisabled: themeLayer2
+                                fallbackBorder: themeLayer2
+                                fallbackText: themeText
+                                fallbackPlaceholder: "white"
+                                fallbackPopup: themePanel
                                 onActivated: function(comboIndex) {
                                     if (formatCreatePanel.selectedFormatIndex < 0 || rowIndex < 0 || comboIndex < 0) {
                                         return
@@ -1201,7 +1118,7 @@ Window {
                                         if (modelData.type === "formula" && valueField.enabled && raw.length > 0 && raw.charAt(0) !== "=") {
                                     return "#ea580c"
                                         }
-                                        return valueField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                        return valueField.activeFocus ? "#e91e63" : themeLayer2
                                     }
                                 }
                                 onActiveFocusChanged: {
@@ -1228,9 +1145,9 @@ Window {
                                 Layout.preferredWidth: 34 * scaleFactor
                                 Layout.preferredHeight: 32 * scaleFactor
                                 radius: 4
-                                color: "#f8fafc"
+                                color: themePanel
                                 border.width: 1
-                                border.color: "#cbd5e1"
+                                border.color: themeLayer2
                                 visible: !formatCreatePanel.selectedBuiltInFormat
                                          && modelData.type === "formula"
                                          && valueField.activeFocus
@@ -1238,7 +1155,7 @@ Window {
                                 Text {
                                     anchors.centerIn: parent
                                     text: "fx"
-                                    color: "#334155"
+                                    color: themeText
                                     font.pixelSize: 10 * scaleFactor
                                     font.bold: true
                                 }
@@ -1288,7 +1205,7 @@ Window {
                                     radius: 4
                                     color: "white"
                                     border.width: 1
-                                    border.color: widthField.activeFocus ? "#e91e63" : "#cbd5e1"
+                                    border.color: widthField.activeFocus ? "#e91e63" : themeLayer2
                                 }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
@@ -1321,28 +1238,21 @@ Window {
                                 }
                             }
 
-                            Rectangle {
+                            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                                 visible: !formatCreatePanel.selectedBuiltInFormat && !rowExpanded
                                 Layout.preferredWidth: 50 * scaleFactor
                                 Layout.preferredHeight: 32 * scaleFactor
-                                radius: 4
-                                color: "#dc2626"
-                                border.color: "#dc2626"
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "Delete"
-                                    color: "white"
-                                    font.pixelSize: 10 * scaleFactor
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
-                                }
+                                text: "Delete"
+                                textPixelSize: 10 * scaleFactor
+                                fallbackNormal: "#dc2626"
+                                fallbackHover: "#b91c1c"
+                                fallbackPressed: "#991b1b"
+                                borderColor: "#dc2626"
+                                onClicked: backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
                             }
                         }
 
@@ -1363,62 +1273,49 @@ Window {
                 Layout.fillWidth: true
                 spacing: 6 * scaleFactor
 
-                Rectangle {
+                PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                     visible: !formatCreatePanel.selectedBuiltInFormat
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38 * scaleFactor
-                    radius: 5
-                    color: "#2563eb"
-                    border.color: "#2563eb"
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Save Formats"
-                        color: "white"
-                        font.pixelSize: 12 * scaleFactor
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, formatNameField.text)
-                            backend.saveFormatByName(rootWindow.formatDesignerSelectedFormatIndex)
-                            backend.commitFormatEdit()
-                            processState = "formatDesigner"
-                        }
+                    text: "Save Formats"
+                    textPixelSize: 12 * scaleFactor
+                    fallbackNormal: themeLayer3
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    borderColor: themeLayer3
+                    onClicked: {
+                        backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, formatNameField.text)
+                        backend.saveFormatByName(rootWindow.formatDesignerSelectedFormatIndex)
+                        backend.commitFormatEdit()
+                        processState = "formatDesigner"
                     }
                 }
 
-                Rectangle {
+                PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38 * scaleFactor
-                    radius: 5
-                    color: "#ffffff"
-                    border.color: "#2563eb"
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Back To List"
-                        color: "#1d4ed8"
-                        font.pixelSize: 12 * scaleFactor
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (formatCreatePanel.selectedBuiltInFormat) {
-                                backend.cancelFormatEdit()
-                                processState = "formatDesigner"
-                            } else if (backend.confirmDiscardFormatEdit()) {
-                                backend.cancelFormatEdit()
-                                processState = "formatDesigner"
-                            }
+                    text: "Back To List"
+                    textPixelSize: 12 * scaleFactor
+                    fallbackNormal: themePanel
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    textColor: themeLayer3
+                    borderColor: themeLayer3
+                    onClicked: {
+                        if (formatCreatePanel.selectedBuiltInFormat) {
+                            backend.cancelFormatEdit()
+                            processState = "formatDesigner"
+                        } else if (backend.confirmDiscardFormatEdit()) {
+                            backend.cancelFormatEdit()
+                            processState = "formatDesigner"
                         }
                     }
                 }
@@ -1433,8 +1330,9 @@ Window {
             Layout.fillWidth: true
 
             Text {
-                text: "ExcelTool"
-                font.family: "Tahoma"
+                text: "CubeFlow"
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -1444,8 +1342,8 @@ Window {
                 visible: selectedFiles.length > 0
                 Layout.fillWidth: true
                 Layout.preferredHeight: 150 * scaleFactor
-                color: "#f9f9f9"
-                border.color: "#dddddd"
+                color: themePanel
+                border.color: themeLayer2
                 border.width: 1
                 radius: 5
                 clip: true
@@ -1474,7 +1372,7 @@ Window {
                                     text: baseName(selectedFiles[index])
                                     font.pixelSize: 11 * scaleFactor
                                     elide: Text.ElideMiddle
-                                    color: "#374151"
+                                    color: themeText
                                 }
 
                                 Text {
@@ -1484,7 +1382,7 @@ Window {
                                     font.pixelSize: 11 * scaleFactor
                                     color: text === "Done" ? "#059669"
                                           : text === "Failed" ? "#dc2626"
-                                          : text === "Processing" ? "#2563eb"
+                                          : text === "Processing" ? themeLayer3
                                           : "#6b7280"
                                 }
                             }
@@ -1511,7 +1409,7 @@ Window {
                     ? "Processing: " + currentFileName + " (" + (currentBatchIndex + 1) + " of " + totalBatchFiles + ")"
                     : "Using " + selectionType + " conversion"
                 font.pixelSize: 12 * scaleFactor
-                color: "#666666"
+                color: themeTextSecondary
                 Layout.alignment: Qt.AlignHCenter
             }
 
@@ -1520,7 +1418,7 @@ Window {
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: "#2563eb"
+                Material.accent: themeLayer3
             }
         }
 
@@ -1550,7 +1448,7 @@ Window {
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: "#2563eb"
+                Material.accent: themeLayer3
             }
         }
 
@@ -1565,8 +1463,9 @@ Window {
             Layout.bottomMargin: 6 * scaleFactor
 
             Text {
-                text: "ExcelTool"
-                font.family: "Tahoma"
+                text: "CubeFlow"
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 23 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -1581,7 +1480,7 @@ Window {
 
             Text {
                 text: "Set one folder for all files, or edit per-file paths."
-                color: "#8a8a8a"
+                color: themeTextSecondary
                 font.pixelSize: 11 * scaleFactor
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
@@ -1589,7 +1488,7 @@ Window {
 
             Text {
                 text: batchOutputs.length + " file(s) ready to save"
-                color: "#4b5563"
+                color: themeText
                 font.pixelSize: 11 * scaleFactor
                 font.bold: true
             }
@@ -1598,7 +1497,7 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: commonBatchDirLayout.implicitHeight + (12 * scaleFactor)
                 color: "#eef2ff"
-                border.color: "#d1d5db"
+                border.color: themeLayer2
                 border.width: 1
                 radius: 5
                 clip: false
@@ -1611,7 +1510,7 @@ Window {
 
                     Text {
                         text: "Batch Save Folder"
-                        color: "#475569"
+                        color: themeText
                         font.pixelSize: 10 * scaleFactor
                         font.bold: true
                         Layout.fillWidth: true
@@ -1627,7 +1526,7 @@ Window {
 
                         Text {
                             text: "Save Folder"
-                            color: "#475569"
+                            color: themeText
                             font.pixelSize: 10 * scaleFactor
                             font.bold: true
                         }
@@ -1639,12 +1538,12 @@ Window {
                             property string dirValidationError: validateBatchSaveDir(text)
                             readOnly: true
                             selectionColor: "#bfdbfe"
-                            color: "#111827"
-                            selectedTextColor: "#111827"
+                            color: themeText
+                            selectedTextColor: themeText
                             background: Rectangle {
                                 radius: 4
-                                color: "#f8fafc"
-                                border.color: allBatchSaveDirField.dirValidationError.length > 0 ? "#dc2626" : "#d1d5db"
+                                color: themeInset
+                                border.color: allBatchSaveDirField.dirValidationError.length > 0 ? "#dc2626" : themeLayer2
                                 border.width: 1
                             }
                             onAccepted: {
@@ -1666,53 +1565,40 @@ Window {
                         }
                     }
 
-                    Rectangle {
+                    PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                         Layout.preferredWidth: 64 * scaleFactor
                         Layout.preferredHeight: 30 * scaleFactor
                         Layout.alignment: Qt.AlignBottom
-                        radius: 5
-                        color: "#2563eb"
-                        border.color: "#2563eb"
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Browse"
-                            color: "white"
-                            font.pixelSize: 11 * scaleFactor
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: backend.browseBatchOutputDirectoryForAll()
-                        }
+                        text: "Browse"
+                        textPixelSize: 11 * scaleFactor
+                        fallbackNormal: themeLayer3
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        borderColor: themeLayer3
+                        onClicked: backend.browseBatchOutputDirectoryForAll()
                     }
 
-                    Rectangle {
+                    PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                         Layout.preferredWidth: 76 * scaleFactor
                         Layout.preferredHeight: 30 * scaleFactor
                         Layout.alignment: Qt.AlignBottom
-                        radius: 5
-                        color: allBatchSaveDirField.text.trim().length > 0 ? "#2563eb" : "#9ca3af"
-                        border.color: color
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Apply All"
-                            color: "white"
-                            font.pixelSize: 11 * scaleFactor
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            enabled: allBatchSaveDirField.text.trim().length > 0
-                            onClicked: backend.applyBatchOutputDirectoryToAll(allBatchSaveDirField.text.trim())
-                        }
+                        text: "Apply All"
+                        textPixelSize: 11 * scaleFactor
+                        enabled: allBatchSaveDirField.text.trim().length > 0
+                        fallbackNormal: themeLayer3
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        fallbackDisabled: "#9ca3af"
+                        borderColor: themeLayer3
+                        onClicked: backend.applyBatchOutputDirectoryToAll(allBatchSaveDirField.text.trim())
                     }
                     }
                 }
@@ -1722,8 +1608,8 @@ Window {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 0
-                color: "#f8fafc"
-                border.color: "#dddddd"
+                color: themePanel
+                border.color: themeLayer2
                 border.width: 1
                 radius: 5
                 clip: true
@@ -1737,9 +1623,9 @@ Window {
 
                     delegate: Rectangle {
                         width: ListView.view.width
-                        color: "#ffffff"
+                        color: themePanel
                         radius: 5
-                        border.color: "#e5e7eb"
+                        border.color: themeLayer2
                         border.width: 1
                         implicitHeight: outputItemColumn.implicitHeight + (12 * scaleFactor)
 
@@ -1753,7 +1639,7 @@ Window {
                                 text: (index + 1) + ". " + modelData.sourceFile
                                 font.pixelSize: 11 * scaleFactor
                                 font.bold: true
-                                color: "#334155"
+                                color: themeText
                                 wrapMode: Text.Wrap
                             }
 
@@ -1763,7 +1649,7 @@ Window {
 
                                 Text {
                                     text: "Output File Name"
-                                    color: "#475569"
+                                    color: themeText
                                     font.pixelSize: 10 * scaleFactor
                                     font.bold: true
                                 }
@@ -1778,12 +1664,12 @@ Window {
                                         text: stripXlsx(modelData.fileName)
                                         property string validationError: validateBatchBaseName(text)
                                         selectionColor: "#bfdbfe"
-                                        color: "#111827"
-                                        selectedTextColor: "#111827"
+                                        color: themeText
+                                        selectedTextColor: themeText
                                         background: Rectangle {
                                             radius: 4
                                             color: "white"
-                                            border.color: outputFileNameField.validationError.length > 0 ? "#dc2626" : "#d1d5db"
+                                            border.color: outputFileNameField.validationError.length > 0 ? "#dc2626" : themeLayer2
                                             border.width: 1
                                         }
                                         onTextEdited: {
@@ -1798,28 +1684,22 @@ Window {
                                         }
                                     }
 
-                                    ComboBox {
+                                    PixelComboBox {
                                         id: extCombo
                                         Layout.preferredWidth: 86 * scaleFactor
-                                        Layout.preferredHeight: 32 * scaleFactor
+                                        Layout.preferredHeight: 34 * scaleFactor
+                                        textPixelSize: 11 * scaleFactor
+                                        popupTextPixelSize: 11 * scaleFactor
                                         model: ["xlsx"]
                                         currentIndex: 0
-
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: "#ffffff"
-                                            border.color: "#d1d5db"
-                                            border.width: 1
-                                        }
-
-                                        contentItem: Text {
-                                            text: extCombo.currentText
-                                            color: "#111827"
-                                            font.pixelSize: 11 * scaleFactor
-                                            verticalAlignment: Text.AlignVCenter
-                                            leftPadding: 10 * scaleFactor
-                                            rightPadding: 6 * scaleFactor
-                                        }
+                                        fallbackNormal: themeInset
+                                        fallbackFocus: themeLayer1
+                                        fallbackOpen: themeLayer2
+                                        fallbackDisabled: themeLayer2
+                                        fallbackBorder: themeLayer2
+                                        fallbackText: themeText
+                                        fallbackPlaceholder: "white"
+                                        fallbackPopup: themePanel
 
                                         onCurrentTextChanged: {
                                             backend.updateBatchOutputFileName(index, stripXlsx(modelData.fileName) + "." + currentText)
@@ -1848,7 +1728,7 @@ Window {
 
                                     Text {
                                         text: "Save Folder"
-                                        color: "#475569"
+                                        color: themeText
                                         font.pixelSize: 10 * scaleFactor
                                         font.bold: true
                                     }
@@ -1860,12 +1740,12 @@ Window {
                                         property string dirValidationError: validateBatchSaveDir(text)
                                         readOnly: true
                                         selectionColor: "#bfdbfe"
-                                        color: "#111827"
-                                        selectedTextColor: "#111827"
+                                        color: themeText
+                                        selectedTextColor: themeText
                                         background: Rectangle {
                                             radius: 4
-                                            color: "#f8fafc"
-                                            border.color: outputSaveDirField.dirValidationError.length > 0 ? "#dc2626" : "#d1d5db"
+                                            color: themeInset
+                                            border.color: outputSaveDirField.dirValidationError.length > 0 ? "#dc2626" : themeLayer2
                                             border.width: 1
                                         }
                                         onTextEdited: backend.updateBatchOutputDirectory(index, text)
@@ -1883,28 +1763,21 @@ Window {
                                     }
                                 }
 
-                                Rectangle {
+                                PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                                     Layout.preferredWidth: 70 * scaleFactor
                                     Layout.preferredHeight: 32 * scaleFactor
                                     Layout.alignment: Qt.AlignBottom
-                                    radius: 5
-                                    color: "#2563eb"
-                                    border.color: "#2563eb"
-                                    border.width: 1
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "Browse"
-                                        color: "white"
-                                        font.pixelSize: 11 * scaleFactor
-                                        font.bold: true
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: backend.browseBatchOutputDirectory(index)
-                                    }
+                                    text: "Browse"
+                                    textPixelSize: 11 * scaleFactor
+                                    fallbackNormal: themeLayer3
+                                    fallbackHover: themeLayer2
+                                    fallbackPressed: themeLayer1
+                                    borderColor: themeLayer3
+                                    onClicked: backend.browseBatchOutputDirectory(index)
                                 }
                             }
                         }
@@ -1924,57 +1797,39 @@ Window {
                     anchors.fill: parent
                     spacing: 8 * scaleFactor
 
-                    Rectangle {
+                    PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40 * scaleFactor
-                        radius: 5
-                        color: backActionArea.pressed ? "#eef2ff" : (backActionArea.containsMouse ? "#f8faff" : "white")
-                        border.color: "#2563eb"
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Back"
-                            color: "#1d4ed8"
-                            font.pixelSize: 13 * scaleFactor
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            id: backActionArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: backend.convertAnotherFile()
-                        }
+                        text: "Back"
+                        textPixelSize: 13 * scaleFactor
+                        fallbackNormal: themePanel
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        textColor: themeLayer3
+                        borderColor: themeLayer3
+                        onClicked: backend.convertAnotherFile()
                     }
 
-                    Rectangle {
+                    PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40 * scaleFactor
-                        color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel())
-                            ? (confirmActionArea.pressed ? "#1d4ed8" : (confirmActionArea.containsMouse ? "#3b82f6" : "#2563eb"))
-                            : "#cccccc"
-                        radius: 5
-                        border.color: (batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()) ? "#2563eb" : "#cccccc"
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Confirm"
-                            color: "white"
-                            font.pixelSize: 13 * scaleFactor
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            id: confirmActionArea
-                            anchors.fill: parent
-                            enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()
-                            hoverEnabled: true
-                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: backend.saveAllBatchOutputs()
-                        }
+                        text: "Confirm"
+                        textPixelSize: 13 * scaleFactor
+                        enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()
+                        fallbackNormal: themeLayer3
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        fallbackDisabled: themeLayer2
+                        borderColor: themeLayer3
+                        onClicked: backend.saveAllBatchOutputs()
                     }
                 }
             }
@@ -2000,28 +1855,20 @@ Window {
                 Layout.alignment: Qt.AlignHCenter
             }
 
-            Rectangle {
+            PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40 * scaleFactor
-                color: "#2563eb"
-                radius: 5
-                border.color: "#2563eb"
-                border.width: 1
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Convert Another File"
-                    color: "white"
-                    font.pixelSize: 14 * scaleFactor
-                    font.bold: true
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        backend.convertAnotherFile()
-                    }
-                }
+                text: "Convert Another File"
+                textPixelSize: 14 * scaleFactor
+                fallbackNormal: themeLayer3
+                fallbackHover: themeLayer2
+                fallbackPressed: themeLayer1
+                borderColor: themeLayer3
+                onClicked: backend.convertAnotherFile()
             }
         }
     }
@@ -2030,9 +1877,10 @@ Window {
         visible: compactHeaderMode && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate"
         anchors.top: parent.top
         anchors.left: parent.left
+        anchors.right: parent.right
         anchors.topMargin: 12 * scaleFactor
         anchors.leftMargin: 20 * scaleFactor
-        width: (compactGifSize + (10 * scaleFactor) + (220 * scaleFactor))
+        anchors.rightMargin: 20 * scaleFactor
         height: compactGifSize
         z: 90
 
@@ -2042,16 +1890,19 @@ Window {
             spacing: 6 * scaleFactor
 
             AnimatedImage {
+                id: compactCopywriting
                 width: compactGifSize
                 height: compactGifSize
                 source: "images/copywriting.gif"
-                speed: 0.4724
+                speed: 1.0
                 fillMode: Image.PreserveAspectFit
+                transformOrigin: Item.Center
+                scale: 1.2
                 anchors.verticalCenter: parent.verticalCenter
             }
 
             Item {
-                width: 220 * scaleFactor
+                width: Math.max(0, parent.width - compactCopywriting.width - (6 * scaleFactor))
                 height: compactGifSize
                 anchors.verticalCenter: parent.verticalCenter
 
@@ -2062,8 +1913,9 @@ Window {
                     Text {
                         width: parent.width
                         height: parent.height * 0.58
-                        text: qsTr("ExcelTool")
-                        font.family: "Tahoma"
+                        text: qsTr("CubeFlow")
+                        color: "white"
+                        font.family: appFontFamily
                         font.pixelSize: Math.max(24, compactGifSize * 0.32)
                         font.bold: true
                         verticalAlignment: Text.AlignBottom
@@ -2075,8 +1927,8 @@ Window {
                         width: parent.width
                         height: parent.height * 0.42
                         text: "by wahchachaps"
-                        color: "#666666"
-                        font.family: "Verdana"
+                        color: themeTextSecondary
+                        font.family: appFontFamily
                         font.pixelSize: Math.max(13, compactGifSize * 0.18)
                         verticalAlignment: Text.AlignTop
                         horizontalAlignment: Text.AlignLeft
@@ -2101,7 +1953,7 @@ Window {
         Text {
             anchors.centerIn: parent
             text: "\u2190"
-            color: backButtonArea.pressed ? "#1e40af" : (backButtonArea.containsMouse ? "#2563eb" : "#1d4ed8")
+            color: backButtonArea.pressed ? themeLayer3 : (backButtonArea.containsMouse ? themeLayer3 : themeLayer3)
             font.pixelSize: 18 * scaleFactor
             font.bold: true
         }
@@ -2121,3 +1973,11 @@ Window {
         }
     }
 }
+
+
+
+
+
+
+
+

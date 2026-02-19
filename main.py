@@ -3,17 +3,19 @@ import os
 import json
 import copy
 import pandas as pd
-import win32com.client as win32
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
+from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 
 
+# Add .xlsx if missing
 def ensure_xlsx_extension(file_name):
     if not file_name:
         return "output.xlsx"
     return file_name if file_name.lower().endswith(".xlsx") else f"{file_name}.xlsx"
 
+# Clean batch output file name
 def normalize_batch_output_name(file_name):
     raw_name = (file_name or "").strip()
     if not raw_name:
@@ -27,6 +29,7 @@ def normalize_batch_output_name(file_name):
         return ""
     return f"{raw_name}.xlsx"
 
+# Check if batch file name is valid
 def get_invalid_batch_name_message(file_name):
     raw_name = (file_name or "").strip()
     if raw_name.lower().endswith(".xlsx"):
@@ -48,6 +51,7 @@ def get_invalid_batch_name_message(file_name):
         return "File name cannot end with a dot or space."
     return ""
 
+# Check if save folder is valid
 def get_invalid_output_directory_message(directory):
     folder = (directory or "").strip()
     if not folder:
@@ -61,6 +65,7 @@ def get_invalid_output_directory_message(directory):
     return ""
 
 
+# Convert Excel column text to number
 def excel_col_to_index(col_name):
     name = (col_name or "").strip().upper()
     if not name or not name.isalpha():
@@ -71,6 +76,7 @@ def excel_col_to_index(col_name):
     return idx - 1
 
 
+# Convert column number to Excel text
 def index_to_excel_col(idx):
     n = max(0, int(idx))
     out = ""
@@ -83,12 +89,14 @@ def index_to_excel_col(idx):
     return out
 
 
+# Build default batch save path
 def build_default_batch_output_path(xml_file):
     source_dir = os.path.dirname(xml_file)
     source_base = os.path.splitext(os.path.basename(xml_file))[0]
     return os.path.join(source_dir, f"{source_base}_converted.xlsx")
 
 
+# Clean path text
 def normalize_path(path):
     if not path:
         return ""
@@ -96,6 +104,7 @@ def normalize_path(path):
     return normalized
 
 
+# Find XML files from selected paths
 def collect_xml_files_from_paths(paths):
     collected = []
     seen = set()
@@ -121,6 +130,7 @@ def collect_xml_files_from_paths(paths):
     return collected
 
 
+# Ask before overwriting existing files
 def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
     existing = [p for p in paths if os.path.exists(p)]
     if not existing:
@@ -142,7 +152,9 @@ def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
     return result == QMessageBox.StandardButton.Yes
 
 
+# Create Excel file
 def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
+    # Clean data and prepare sheet
     df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
     is_builtin = xml_type in ["Den", "Glacier", "Globe"]
     with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
@@ -155,21 +167,46 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
         ws = writer.sheets[sheet_name]
 
         if not is_builtin:
+            # Styles for user format
+            header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#99CC00', 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
             generic_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
+            formula_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
+            generic_highlight_fmt = workbook.add_format({'num_format': 'General', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
+            formula_highlight_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
+
+            # Paint row 1 and row 2 headers
+            for header_row in range(2):
+                for c in range(df.shape[1]):
+                    ws.write(header_row, c, "", header_fmt)
+
+            # Write user data, color formulas, and highlight rows when seconds are not 00
             for r in range(len(df)):
                 excel_r = start_row + r
+                row_highlight = False
+                cell_value = df.iloc[r, 0] if df.shape[1] > 0 else None
+                if isinstance(cell_value, str):
+                    try:
+                        hh, mm, ss = map(int, cell_value.strip().split(' ')[1].split(':'))
+                        row_highlight = ss != 0
+                    except Exception:
+                        row_highlight = False
                 for c in range(df.shape[1]):
                     val = df.iloc[r, c]
-                    if isinstance(val, str) and val.startswith("="):
-                        ws.write_formula(excel_r, c, val, generic_fmt)
+                    is_formula = isinstance(val, str) and val.startswith("=")
+                    if is_formula:
+                        cell_fmt = formula_highlight_fmt if row_highlight else formula_fmt
+                        ws.write_formula(excel_r, c, val, cell_fmt)
                     else:
-                        ws.write(excel_r, c, val, generic_fmt)
+                        cell_fmt = generic_highlight_fmt if row_highlight else generic_fmt
+                        ws.write(excel_r, c, val, cell_fmt)
+            # Use saved column widths from user format
             custom_widths = df.attrs.get("custom_widths", None)
             if isinstance(custom_widths, list):
                 for i, w in enumerate(custom_widths[:df.shape[1]]):
                     ws.set_column(i, i, float(w))
             return
 
+        # Styles for hard coded format
         general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
         text_fmt = workbook.add_format({'num_format': '@', 'border': 1, 'align': 'right'})
         num_fmt = workbook.add_format({'num_format': '0.00', 'border': 1, 'align': 'right'})
@@ -177,6 +214,7 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
         colored_num_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#F2E6FF', 'border': 1, 'align': 'right'})
         black_header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#F2E6FF', 'font_color': 'black', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
 
+        # Header rows for hard coded format
         for r in range(2):
             for c in range(df.shape[1]):
                 val = df.iloc[r, c]
@@ -187,6 +225,7 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 else:
                     ws.write(r, c, val, header_fmt)
 
+        # Data rows for hard coded format
         for r in range(2, len(df)):
             for c in range(df.shape[1]):
                 val = df.iloc[r, c]
@@ -227,6 +266,7 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                     else:
                         ws.write(r, c, val, num_fmt)
 
+        # Highlight row yellow when column A seconds are not 00
         for r in range(2, len(df)):
             cell_value = df.iloc[r, 0]
             if isinstance(cell_value, str):
@@ -273,6 +313,7 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 except Exception:
                     continue
 
+        # Set widths and hidden columns for each hard coded format type
         if xml_type == "Den":
             widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
             hidden_cols = {6: 16.27}
@@ -289,6 +330,7 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 ws.set_column(col, col, w, None, {'hidden': True})
 
 
+# Worker to process XML file data
 class Worker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -351,7 +393,7 @@ class Worker(QObject):
             final_rows = []
             for i in range(len(df_data)):
                 row = [""] * max_col
-                # Custom formats always start writing data at Excel row 3.
+                                                                          
                 excel_row_num = i + 3
                 for col_def in columns:
                     target = excel_col_to_index(col_def.get("col", ""))
@@ -454,6 +496,7 @@ class Worker(QObject):
         except Exception as e:
             self.error.emit(f"Glacier processing error: {e}")
 
+# Worker to save one Excel file
 class SaveWorker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -478,6 +521,7 @@ class SaveWorker(QObject):
             
 
 
+# Worker to save all batch files
 class BatchSaveWorker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -509,6 +553,7 @@ class BatchSaveWorker(QObject):
             self.error.emit(f"Failed to save batch files: {e}")
 
 
+# Main backend for QML UI
 class Backend(QObject):
     progressUpdated = pyqtSignal(int)
     formatModelChanged = pyqtSignal()
@@ -544,7 +589,7 @@ class Backend(QObject):
         self.format_designer_status = ""
         self._format_edit_snapshot = None
         self._format_edit_active = False
-        self.settings = QSettings("ExcelTool", "ExcelTool")
+        self.settings = QSettings("CubeFlow", "CubeFlow")
         self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
         self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
         self.last_batch_dir = str(self.settings.value("lastBatchDir", "", str))
@@ -859,7 +904,7 @@ class Backend(QObject):
 
     @pyqtSlot(result=int)
     def createFormatDraft(self):
-        # Snapshot first so cancelling from create flow removes the draft format.
+                                                                                 
         self._format_edit_snapshot = copy.deepcopy(self.format_model)
         self._format_edit_active = True
         name = self._unique_format_name("New Format")
@@ -1042,7 +1087,7 @@ class Backend(QObject):
         self.batch_file_statuses = ["Queued"] * len(self.selected_files) if is_batch_selection else []
 
         if self.root:
-            # Force change notifications even when selecting the same files repeatedly.
+                                                                                       
             self.root.setProperty("processState", "")
             self.root.setProperty("isBatch", False)
             self.root.setProperty("selectedFiles", [])
@@ -1098,7 +1143,7 @@ class Backend(QObject):
         self.batch_outputs = []
         self.batch_file_statuses = ["Queued"] * len(self.selected_files)
         if self.root:
-            # Force a full UI refresh so second/third runs with same files still repaint.
+                                                                                         
             self.root.setProperty("processState", "")
             self.root.setProperty("isBatch", False)
             self.root.setProperty("selectedFiles", [])
@@ -1159,7 +1204,7 @@ class Backend(QObject):
     def syncSelectionContext(self, files, selected_file, is_batch):
         normalized_files = [normalize_path(p) for p in files if normalize_path(p)]
         normalized_selected_file = normalize_path(selected_file) if selected_file else ""
-        # Do not clobber a valid backend selection with an empty/stale QML payload.
+                                                                                   
         if len(normalized_files) > 1:
             self.selected_files = normalized_files
             self.selected_file = None
@@ -1192,7 +1237,7 @@ class Backend(QObject):
 
     @pyqtSlot()
     def confirmAndConvert(self):
-        # Always re-sync from QML so repeated runs with same files are handled reliably.
+                                                                                        
         if self.root:
             raw_files = self.root.property("selectedFiles")
             ui_files = [normalize_path(p) for p in self._qml_list(raw_files) if normalize_path(p)]
@@ -1211,13 +1256,13 @@ class Backend(QObject):
                 self.selected_files = []
                 self.selected_file = ui_selected
                 self.is_batch = False
-            # If QML reports empty selection, keep backend selection from applySelectedPaths/syncSelectionContext.
+                                                                                                                  
 
             ui_type = self.root.property("selectionType")
             if ui_type:
                 self.xml_type = ui_type
 
-        # Derive mode from current selection to avoid stale is_batch across repeated runs.
+                                                                                          
         if len(self.selected_files) > 1:
             self.is_batch = True
             self.selected_file = None
@@ -1616,15 +1661,30 @@ class Backend(QObject):
 if __name__=="__main__":
     app=QApplication(sys.argv)
     app.setStyle("Fusion")
+    app_font_family = app.font().family()
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "Minecraft.ttf")
+    if os.path.exists(font_path):
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            loaded_families = QFontDatabase.applicationFontFamilies(font_id)
+            if loaded_families:
+                app_font_family = loaded_families[0]
+                app.setFont(QFont(app_font_family))
+    icon_path=os.path.join(os.path.dirname(__file__),"images","icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     engine=QQmlApplicationEngine()
 
     backend=Backend(engine)
     engine.rootContext().setContextProperty("backend",backend)
+    engine.rootContext().setContextProperty("appFontFamily", app_font_family)
 
     qml_file=os.path.join(os.path.dirname(__file__),"main.qml")
     engine.load(QUrl.fromLocalFile(qml_file))
     if not engine.rootObjects(): sys.exit(-1)
 
     backend.root=engine.rootObjects()[0]
+    if os.path.exists(icon_path):
+        backend.root.setIcon(QIcon(icon_path))
     backend.applyRememberedSettingsToUI()
     sys.exit(app.exec())
