@@ -60,6 +60,9 @@ Window {
     property string formatEditorFocusType: ""
     property real primaryControlHeight: 38 * scaleFactor
     property real primaryControlFontSize: 12 * scaleFactor
+    property bool compactBatchControls: width <= 540
+    property real batchControlHeight: (compactBatchControls ? 30 : 32) * scaleFactor
+    property real batchOutputTextSize: (compactBatchControls ? 9 : 10) * scaleFactor
 
 
     property real scaleFactor: Math.min(width / 400, height / 500)
@@ -315,7 +318,7 @@ Window {
             }
 
             Text {
-                color: "white"
+                color: themeTextSecondary
                 text: "by wahchachaps"
                 font.pixelSize: 12 * scaleFactor * headerScale
                 font.family: appFontFamily
@@ -401,10 +404,10 @@ Window {
                     Layout.alignment: Qt.AlignHCenter
 
                     Image {
-                        source: "images/upload.png"
+                        source: "images/file.png"
                         fillMode: Image.PreserveAspectFit
-                        width: parent.width
-                        height: parent.height
+                        width: 75
+                        height: 75
                         anchors.centerIn: parent
                     }
                 }
@@ -667,6 +670,8 @@ Window {
 
             Text {
                 text: "Select Format"
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 22 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -674,14 +679,15 @@ Window {
 
             Text {
                 text: "Click a format to edit it"
-                color: themeText
+                color: themeTextSecondary
                 font.pixelSize: 11 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
                 text: "Create Format"
-                color: themeLayer3
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 12 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -719,7 +725,7 @@ Window {
                         height: 44 * scaleFactor
                         radius: 5
                         property bool isBuiltInFormat: (modelData.name === "Den" || modelData.name === "Glacier" || modelData.name === "Globe")
-                        color: rootWindow.formatDesignerSelectedFormatIndex === index ? "#eef2ff" : "white"
+                        color: rootWindow.formatDesignerSelectedFormatIndex === index ? themeLayer1 : themePanel
                         border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? themeLayer3 : themeLayer2
                         border.width: 1
 
@@ -738,12 +744,12 @@ Window {
                             }
 
                             PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
-                                Layout.preferredWidth: 56 * scaleFactor
-                                Layout.preferredHeight: 28 * scaleFactor
+                        sliceLeft: 4
+                        sliceRight: 4
+                        sliceTop: 4
+                        sliceBottom: 4
+                                Layout.preferredWidth: 60 * scaleFactor
+                                Layout.preferredHeight: 30 * scaleFactor
                                 text: isBuiltInFormat ? "Open" : "Edit"
                                 textPixelSize: 10 * scaleFactor
                                 fallbackNormal: themeLayer3
@@ -759,13 +765,13 @@ Window {
                             }
 
                             PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
+                                sliceLeft: 4
+                                sliceRight: 4
+                                sliceTop: 4
+                                sliceBottom: 4
                                 visible: !isBuiltInFormat
-                                Layout.preferredWidth: 56 * scaleFactor
-                                Layout.preferredHeight: 28 * scaleFactor
+                                Layout.preferredWidth: 60 * scaleFactor
+                                Layout.preferredHeight: 30 * scaleFactor
                                 text: "Delete"
                                 textPixelSize: 10 * scaleFactor
                                 enabled: backend.formatModel.length > 1
@@ -820,7 +826,7 @@ Window {
                 fallbackNormal: themePanel
                 fallbackHover: themeLayer2
                 fallbackPressed: themeLayer1
-                textColor: themeLayer3
+                textColor: themeText
                 borderColor: themeLayer3
                 onClicked: backend.closeFormatDesigner()
             }
@@ -851,14 +857,18 @@ Window {
 
             Text {
                 text: formatCreatePanel.selectedBuiltInFormat ? "View Format" : "Create Format"
+                color: "white"
+                font.family: appFontFamily
                 font.pixelSize: 22 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
-            TextField {
+            PixelTextField {
                 id: formatNameField
                 Layout.fillWidth: true
+                Layout.preferredHeight: 50 * scaleFactor
+                font.pixelSize: 16 * scaleFactor
                 text: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
                     ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].name
                     : ""
@@ -881,12 +891,12 @@ Window {
                 spacing: 6 * scaleFactor
 
                 PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
+            sliceLeft: 4
+            sliceRight: 4
             sliceTop: 4
             sliceBottom: 4
-                    Layout.preferredWidth: 100 * scaleFactor
-                    Layout.preferredHeight: 32 * scaleFactor
+                    Layout.preferredWidth: 80 * scaleFactor
+                    Layout.preferredHeight: 28 * scaleFactor
                     text: "Add Column"
                     textPixelSize: 10 * scaleFactor
                     enabled: backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
@@ -1010,7 +1020,7 @@ Window {
                                 rootWindow.formatEditorFocusType = ""
                             }
                         }
-                        color: rootWindow.formatDesignerSelectedRowIndex === index ? "#eef2ff" : "white"
+                        color: rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer1 : themePanel
                         border.color: rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer3 : themeLayer2
                         border.width: 1
 
@@ -1019,10 +1029,10 @@ Window {
                             anchors.margins: 6 * scaleFactor
                             spacing: 6 * scaleFactor
 
-                            TextField {
+                            PixelTextField {
                                 id: colField
                                 Layout.preferredWidth: 48 * scaleFactor
-                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
                                 Layout.fillWidth: activeFocus
                                 text: modelData.col
                                 placeholderText: ""
@@ -1030,12 +1040,6 @@ Window {
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
-                                background: Rectangle {
-                                    radius: 4
-                                    color: "white"
-                                    border.width: 1
-                                    border.color: colField.activeFocus ? "#e91e63" : themeLayer2
-                                }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
                                         rootWindow.formatEditorFocusType = "column"
@@ -1058,10 +1062,11 @@ Window {
                             PixelComboBox {
                                 id: typeCombo
                                 Layout.preferredWidth: 82 * scaleFactor
-                                Layout.preferredHeight: (activeFocus || (popup && popup.visible)) ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
                                 Layout.fillWidth: activeFocus || (popup && popup.visible)
-                                textPixelSize: (activeFocus || (popup && popup.visible)) ? 12 * scaleFactor : 11 * scaleFactor
+                                textPixelSize: 11 * scaleFactor
                                 popupTextPixelSize: 11 * scaleFactor
+                                skinYScale: 1.2
                                 model: ["XML Data", "Formula", "Empty"]
                                 currentIndex: {
                                     var t = (modelData && modelData.type) ? modelData.type : "data"
@@ -1096,30 +1101,20 @@ Window {
                                 }
                             }
 
-                            TextField {
+                            PixelTextField {
                                 id: valueField
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
                                 text: modelData.value
                                 enabled: !formatCreatePanel.selectedBuiltInFormat && modelData.type !== "empty"
                                 visible: !rowExpanded || activeFocus
                                 z: activeFocus ? 3 : 0
-                                font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
+                                font.pixelSize: 11 * scaleFactor
                                 placeholderText: ""
-                                background: Rectangle {
-                                    radius: 4
-                                    color: "white"
-                                    border.width: 1
-                                    border.color: {
-                                        var raw = valueField.text ? valueField.text.trim() : ""
-                                        if (modelData.type === "data" && valueField.enabled && raw.length > 0 && isNaN(parseInt(raw))) {
-                                            return "#dc2626"
-                                        }
-                                        if (modelData.type === "formula" && valueField.enabled && raw.length > 0 && raw.charAt(0) !== "=") {
-                                    return "#ea580c"
-                                        }
-                                        return valueField.activeFocus ? "#e91e63" : themeLayer2
-                                    }
+                                hasError: {
+                                    var raw = valueField.text ? valueField.text.trim() : ""
+                                    return (modelData.type === "data" && valueField.enabled && raw.length > 0 && isNaN(parseInt(raw)))
+                                        || (modelData.type === "formula" && valueField.enabled && raw.length > 0 && raw.charAt(0) !== "=")
                                 }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
@@ -1188,10 +1183,10 @@ Window {
                                 }
                             }
 
-                            TextField {
+                            PixelTextField {
                                 id: widthField
                                 Layout.preferredWidth: 64 * scaleFactor
-                                Layout.preferredHeight: activeFocus ? 40 * scaleFactor : 32 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
                                 Layout.fillWidth: activeFocus
                                 text: String(modelData.width)
                                 placeholderText: ""
@@ -1200,13 +1195,7 @@ Window {
                                 visible: !rowExpanded || activeFocus
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
-                                font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
-                                background: Rectangle {
-                                    radius: 4
-                                    color: "white"
-                                    border.width: 1
-                                    border.color: widthField.activeFocus ? "#e91e63" : themeLayer2
-                                }
+                                font.pixelSize: 11 * scaleFactor
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
                                         rootWindow.formatEditorFocusType = "width"
@@ -1239,13 +1228,15 @@ Window {
                             }
 
                             PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
+                                sliceLeft: 5
+                                sliceRight: 5
+                                sliceTop: 4
+                                sliceBottom: 4
                                 visible: !formatCreatePanel.selectedBuiltInFormat && !rowExpanded
                                 Layout.preferredWidth: 50 * scaleFactor
-                                Layout.preferredHeight: 32 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
+                                skinYScaleWide: 1.0
+                                skinYScaleCompact: 1.0
                                 text: "Delete"
                                 textPixelSize: 10 * scaleFactor
                                 fallbackNormal: "#dc2626"
@@ -1274,10 +1265,10 @@ Window {
                 spacing: 6 * scaleFactor
 
                 PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
+                    sliceLeft: 5
+                    sliceRight: 5
+                    sliceTop: 4
+                    sliceBottom: 4
                     visible: !formatCreatePanel.selectedBuiltInFormat
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38 * scaleFactor
@@ -1296,10 +1287,10 @@ Window {
                 }
 
                 PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
+                    sliceLeft: 5
+                    sliceRight: 5
+                    sliceTop: 4
+                    sliceBottom: 4
                     Layout.fillWidth: true
                     Layout.preferredHeight: 38 * scaleFactor
                     text: "Back To List"
@@ -1307,7 +1298,7 @@ Window {
                     fallbackNormal: themePanel
                     fallbackHover: themeLayer2
                     fallbackPressed: themeLayer1
-                    textColor: themeLayer3
+                    textColor: themeText
                     borderColor: themeLayer3
                     onClicked: {
                         if (formatCreatePanel.selectedBuiltInFormat) {
@@ -1366,20 +1357,27 @@ Window {
                             RowLayout {
                                 width: convertingBatchScroll.availableWidth
                                 spacing: 6 * scaleFactor
+                                clip: true
 
                                 Text {
                                     Layout.fillWidth: true
                                     text: baseName(selectedFiles[index])
                                     font.pixelSize: 11 * scaleFactor
                                     elide: Text.ElideMiddle
+                                    wrapMode: Text.NoWrap
+                                    clip: true
                                     color: themeText
                                 }
 
                                 Text {
-                                    Layout.preferredWidth: 74 * scaleFactor
+                                    Layout.preferredWidth: 88 * scaleFactor
+                                    Layout.maximumWidth: 88 * scaleFactor
                                     horizontalAlignment: Text.AlignRight
                                     text: (batchFileStatuses && batchFileStatuses.length > index) ? batchFileStatuses[index] : "Queued"
                                     font.pixelSize: 11 * scaleFactor
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    clip: true
                                     color: text === "Done" ? "#059669"
                                           : text === "Failed" ? "#dc2626"
                                           : text === "Processing" ? themeLayer3
@@ -1393,12 +1391,14 @@ Window {
 
             Text {
                 text: "Converting File"
+                color: "white"
                 font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Text {
+                color: "white"
                 text: "Please wait while we process your XML file..."
                 font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
@@ -1411,6 +1411,10 @@ Window {
                 font.pixelSize: 12 * scaleFactor
                 color: themeTextSecondary
                 Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                wrapMode: Text.NoWrap
             }
 
             BusyIndicator {
@@ -1473,6 +1477,7 @@ Window {
 
             Text {
                 text: "Review Batch Output"
+                color: "white"
                 font.pixelSize: 17 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
@@ -1496,7 +1501,7 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: commonBatchDirLayout.implicitHeight + (12 * scaleFactor)
-                color: "#eef2ff"
+                color: themePanel
                 border.color: themeLayer2
                 border.width: 1
                 radius: 5
@@ -1531,21 +1536,25 @@ Window {
                             font.bold: true
                         }
 
-                        TextField {
+                        PixelTextField {
                             id: allBatchSaveDirField
                             Layout.fillWidth: true
+                            Layout.preferredHeight: batchControlHeight
+                            font.pixelSize: batchOutputTextSize
+                            normalSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                            focusSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                            errorSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                            disabledSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
                             text: (batchOutputs && batchOutputs.length > 0) ? batchOutputs[0].saveDir : ""
                             property string dirValidationError: validateBatchSaveDir(text)
+                            hasError: dirValidationError.length > 0
                             readOnly: true
                             selectionColor: "#bfdbfe"
                             color: themeText
                             selectedTextColor: themeText
-                            background: Rectangle {
-                                radius: 4
-                                color: themeInset
-                                border.color: allBatchSaveDirField.dirValidationError.length > 0 ? "#dc2626" : themeLayer2
-                                border.width: 1
-                            }
+                            fallbackNormal: themeInset
+                            fallbackFocus: themeInset
+                            fallbackDisabled: themeInset
                             onAccepted: {
                                 var path = text.trim()
                                 if (path.length > 0) {
@@ -1566,15 +1575,17 @@ Window {
                     }
 
                     PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
-                        Layout.preferredWidth: 64 * scaleFactor
-                        Layout.preferredHeight: 30 * scaleFactor
+                        sliceLeft: 5
+                        sliceRight: 5
+                        sliceTop: 4
+                        sliceBottom: 4
+                        Layout.preferredWidth: (compactBatchControls ? 84 : 64) * scaleFactor
+                        Layout.preferredHeight: batchControlHeight
                         Layout.alignment: Qt.AlignBottom
+                        skinYScaleWide: 1.0
+                        skinYScaleCompact: 1.0
                         text: "Browse"
-                        textPixelSize: 11 * scaleFactor
+                        textPixelSize: (compactBatchControls ? 9 : 10) * scaleFactor
                         fallbackNormal: themeLayer3
                         fallbackHover: themeLayer2
                         fallbackPressed: themeLayer1
@@ -1587,11 +1598,13 @@ Window {
             sliceRight: 5
             sliceTop: 4
             sliceBottom: 4
-                        Layout.preferredWidth: 76 * scaleFactor
-                        Layout.preferredHeight: 30 * scaleFactor
+                        Layout.preferredWidth: (compactBatchControls ? 96 : 76) * scaleFactor
+                        Layout.preferredHeight: batchControlHeight
                         Layout.alignment: Qt.AlignBottom
+                        skinYScaleWide: 1.0
+                        skinYScaleCompact: 1.0
                         text: "Apply All"
-                        textPixelSize: 11 * scaleFactor
+                        textPixelSize: (compactBatchControls ? 9 : 10) * scaleFactor
                         enabled: allBatchSaveDirField.text.trim().length > 0
                         fallbackNormal: themeLayer3
                         fallbackHover: themeLayer2
@@ -1658,20 +1671,17 @@ Window {
                                     Layout.fillWidth: true
                                     spacing: 6 * scaleFactor
 
-                                    TextField {
+                                    PixelTextField {
                                         id: outputFileNameField
                                         Layout.fillWidth: true
+                                        Layout.preferredHeight: batchControlHeight
+                                        font.pixelSize: batchOutputTextSize
                                         text: stripXlsx(modelData.fileName)
                                         property string validationError: validateBatchBaseName(text)
+                                        hasError: validationError.length > 0
                                         selectionColor: "#bfdbfe"
                                         color: themeText
                                         selectedTextColor: themeText
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: "white"
-                                            border.color: outputFileNameField.validationError.length > 0 ? "#dc2626" : themeLayer2
-                                            border.width: 1
-                                        }
                                         onTextEdited: {
                                             validationError = validateBatchBaseName(text)
                                             batchFileNameDrafts[index] = text
@@ -1686,10 +1696,11 @@ Window {
 
                                     PixelComboBox {
                                         id: extCombo
-                                        Layout.preferredWidth: 86 * scaleFactor
-                                        Layout.preferredHeight: 34 * scaleFactor
-                                        textPixelSize: 11 * scaleFactor
-                                        popupTextPixelSize: 11 * scaleFactor
+                                        Layout.preferredWidth: (compactBatchControls ? 104 : 86) * scaleFactor
+                                        Layout.preferredHeight: batchControlHeight
+                                        textPixelSize: (compactBatchControls ? 9 : 10) * scaleFactor
+                                        popupTextPixelSize: (compactBatchControls ? 9 : 10) * scaleFactor
+                                        skinYScale: 1.0
                                         model: ["xlsx"]
                                         currentIndex: 0
                                         fallbackNormal: themeInset
@@ -1733,21 +1744,25 @@ Window {
                                         font.bold: true
                                     }
 
-                                    TextField {
+                                    PixelTextField {
                                         id: outputSaveDirField
                                         Layout.fillWidth: true
+                                        Layout.preferredHeight: batchControlHeight
+                                        font.pixelSize: batchOutputTextSize
+                                        normalSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                                        focusSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                                        errorSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
+                                        disabledSource: Qt.resolvedUrl("images/ui/textbox_disabled.png")
                                         text: modelData.saveDir
                                         property string dirValidationError: validateBatchSaveDir(text)
+                                        hasError: dirValidationError.length > 0
                                         readOnly: true
                                         selectionColor: "#bfdbfe"
                                         color: themeText
                                         selectedTextColor: themeText
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: themeInset
-                                            border.color: outputSaveDirField.dirValidationError.length > 0 ? "#dc2626" : themeLayer2
-                                            border.width: 1
-                                        }
+                                        fallbackNormal: themeInset
+                                        fallbackFocus: themeInset
+                                        fallbackDisabled: themeInset
                                         onTextEdited: backend.updateBatchOutputDirectory(index, text)
                                         onEditingFinished: backend.updateBatchOutputDirectory(index, text)
                                     }
@@ -1768,11 +1783,13 @@ Window {
             sliceRight: 5
             sliceTop: 4
             sliceBottom: 4
-                                    Layout.preferredWidth: 70 * scaleFactor
-                                    Layout.preferredHeight: 32 * scaleFactor
+                                    Layout.preferredWidth: (compactBatchControls ? 84 : 70) * scaleFactor
+                                    Layout.preferredHeight: batchControlHeight
                                     Layout.alignment: Qt.AlignBottom
+                                    skinYScaleWide: 1.0
+                                    skinYScaleCompact: 1.0
                                     text: "Browse"
-                                    textPixelSize: 11 * scaleFactor
+                                    textPixelSize: (compactBatchControls ? 9 : 10) * scaleFactor
                                     fallbackNormal: themeLayer3
                                     fallbackHover: themeLayer2
                                     fallbackPressed: themeLayer1
@@ -1809,16 +1826,16 @@ Window {
                         fallbackNormal: themePanel
                         fallbackHover: themeLayer2
                         fallbackPressed: themeLayer1
-                        textColor: themeLayer3
+                        textColor: themeText
                         borderColor: themeLayer3
                         onClicked: backend.convertAnotherFile()
                     }
 
                     PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
+                        sliceLeft: 5
+                        sliceRight: 5
+                        sliceTop: 4
+                        sliceBottom: 4
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40 * scaleFactor
                         text: "Confirm"
@@ -1973,11 +1990,3 @@ Window {
         }
     }
 }
-
-
-
-
-
-
-
-

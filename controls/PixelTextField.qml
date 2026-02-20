@@ -12,23 +12,24 @@ TextField {
     property color fallbackBorder: "#6b6b7a"
     property color fallbackText: "white"
     property color fallbackPlaceholder: "#b8b8c4"
-    property int sliceLeft: 4
-    property int sliceRight: 4
-    property int sliceTop: 4
-    property int sliceBottom: 4
+    property int sliceLeft: 8
+    property int sliceRight: 8
+    property int sliceTop: 8
+    property int sliceBottom: 8
 
     property string normalSource: Qt.resolvedUrl("../images/ui/textbox_normal.png")
     property string focusSource: Qt.resolvedUrl("../images/ui/textbox_focus.png")
     property string errorSource: Qt.resolvedUrl("../images/ui/textbox_error.png")
     property string disabledSource: Qt.resolvedUrl("../images/ui/textbox_disabled.png")
 
-    implicitHeight: 32
+    implicitHeight: 36
     color: fallbackText
+    verticalAlignment: TextInput.AlignVCenter
     placeholderTextColor: fallbackPlaceholder
     selectionColor: "#7d7d8a"
     selectedTextColor: fallbackText
-    leftPadding: 10
-    rightPadding: 10
+    leftPadding: 12
+    rightPadding: 12
     topPadding: 6
     bottomPadding: 6
 
@@ -39,6 +40,11 @@ TextField {
                                               : (activeFocus && focusSource.length > 0
                                                  ? focusSource
                                                  : normalSource))
+    onActiveFocusChanged: {
+        if (activeFocus) {
+            cursorPosition = text.length
+        }
+    }
 
     background: Item {
         BorderImage {

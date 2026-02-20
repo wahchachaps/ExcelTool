@@ -23,7 +23,7 @@ Item {
     property int sliceBottom: 4
     property real skinXScale: 1.0
     property real skinYScaleWide: 1.6
-    property real skinYScaleCompact: 1.15
+    property real skinYScaleCompact: 1.6
     property int compactWidthThreshold: 120
 
     signal clicked()

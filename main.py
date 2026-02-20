@@ -8,6 +8,11 @@ from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 
+# Use a non-native Qt Quick Controls style so custom control skins
+# (background/contentItem/indicator) are applied without runtime warnings.
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+os.environ.setdefault("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic")
+
 
 # Add .xlsx if missing
 def ensure_xlsx_extension(file_name):
