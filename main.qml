@@ -1,12 +1,5 @@
-﻿/*
-This is a UI file (.ui.qml) that is intended to be edited in Qt Design Studio only.
-It is supposed to be strictly declarative and only uses a subset of QML. If you edit
-this file manually, you might introduce QML code that is not supported by Qt Design Studio.
-Check out https://doc.qt.io/qtcreator/creator-quick-ui-forms.html for details on .ui.qml files.
-*/
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Window
 import QtMultimedia
@@ -30,11 +23,22 @@ Window {
     property color themeText: "white"
     property color themeTextSecondary: "#b8b8c4"
     property color themeInset: "#2b2b36"
-    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
+    flags: Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint
     onProcessStateChanged: {
         requestActivate()
         if (processState !== "batchReview") {
             batchFileNameDrafts = ({})
+            batchRowHighlightIndex = -1
+        }
+        if (processState === "converting") {
+            Qt.callLater(function() {
+                anchorConvertingStatusToRecent()
+            })
+        }
+        if (processState !== "formatCreate") {
+            formatRowsHighlightIndex = -1
+            formatEditorFocusType = ""
+            formatRowsJumpToIndexNextChange = -1
         }
         if (processState !== "formatDesigner" && processState !== "formatCreate") {
             rootWindow.formatDesignerSelectedFormatIndex = 0
@@ -63,7 +67,35 @@ Window {
     property bool compactBatchControls: width <= 540
     property real batchControlHeight: (compactBatchControls ? 30 : 32) * scaleFactor
     property real batchOutputTextSize: (compactBatchControls ? 9 : 10) * scaleFactor
+    property real formatRowsSavedContentY: 0
+    property real batchOutputsSavedContentY: 0
+    property bool formatRowsRestorePending: false
+    property bool batchOutputsRestorePending: false
+    property bool formatRowsScrollToBottomNextChange: false
+    property int formatRowsJumpToIndexNextChange: -1
+    property int formatRowsHighlightIndex: -1
+    property int batchRowHighlightIndex: -1
+    property string confirmAction: ""
+    property string confirmMessage: ""
 
+    onFormatDesignerSelectedFormatIndexChanged: {
+        formatRowsSavedContentY = 0
+        formatRowsRestorePending = false
+        formatRowsHighlightIndex = -1
+    }
+
+    onBatchOutputsChanged: {
+        var keepY = batchOutputsSavedContentY
+        queueRestoreListContentY(batchOutputsListView, keepY)
+    }
+
+    onBatchFileStatusesChanged: {
+        if (processState === "converting") {
+            Qt.callLater(function() {
+                anchorConvertingStatusToRecent()
+            })
+        }
+    }
 
     property real scaleFactor: Math.min(width / 400, height / 500)
     property bool windowSizeChanged: width > minimumWidth || height > minimumHeight
@@ -126,6 +158,199 @@ Window {
         return backend.validateOutputDirectory(String(path || ""))
     }
 
+    function restoreListContentY(listView, targetY) {
+        if (!listView) {
+            return
+        }
+        var maxY = Math.max(0, listView.contentHeight - listView.height)
+        var clamped = Math.max(0, Math.min(targetY, maxY))
+        listView.contentY = clamped
+    }
+
+    function queueRestoreListContentY(listView, targetY) {
+        if (listView === formatRowsListView) {
+            formatRowsRestorePending = true
+        } else if (listView === batchOutputsListView) {
+            batchOutputsRestorePending = true
+        }
+        Qt.callLater(function() {
+            restoreListContentY(listView, targetY)
+            Qt.callLater(function() {
+                restoreListContentY(listView, targetY)
+                if (listView === formatRowsListView) {
+                    formatRowsRestorePending = false
+                    formatRowsSavedContentY = formatRowsListView ? formatRowsListView.contentY : targetY
+                } else if (listView === batchOutputsListView) {
+                    batchOutputsRestorePending = false
+                    batchOutputsSavedContentY = batchOutputsListView ? batchOutputsListView.contentY : targetY
+                }
+            })
+        })
+    }
+
+    function rememberFormatRowsScroll() {
+        if (formatRowsListView) {
+            formatRowsSavedContentY = formatRowsListView.contentY
+        }
+    }
+
+    function prepareFormatRowsModelChange(scrollToBottom) {
+        var toBottom = !!scrollToBottom
+        rememberFormatRowsScroll()
+        formatRowsRestorePending = true
+        formatRowsScrollToBottomNextChange = toBottom
+        formatRowsJumpToIndexNextChange = -1
+        if (toBottom) {
+            formatRowsSavedContentY = 1000000000
+        }
+    }
+
+    function markFormatRowHighlight(rowIndex) {
+        formatRowsHighlightIndex = rowIndex >= 0 ? rowIndex : -1
+    }
+
+    function markAndJumpFormatRow(rowIndex) {
+        markFormatRowHighlight(rowIndex)
+        if (rowIndex >= 0) {
+            formatRowsRestorePending = true
+            formatRowsJumpToIndexNextChange = rowIndex
+        }
+    }
+
+    function showColumnLettersOnlyPopup(targetItem) {
+        if (targetItem) {
+            var p = targetItem.mapToItem(rootWindow.contentItem, 0, targetItem.height + (4 * scaleFactor))
+            var margin = 8 * scaleFactor
+            var maxX = Math.max(margin, rootWindow.width - columnLettersPopup.width - margin)
+            var maxY = Math.max(margin, rootWindow.height - columnLettersPopup.height - margin)
+            columnLettersPopup.x = Math.max(margin, Math.min(p.x, maxX))
+            columnLettersPopup.y = Math.max(margin, Math.min(p.y, maxY))
+        }
+        columnLettersPopup.close()
+        columnLettersPopup.open()
+        columnLettersPopupTimer.restart()
+    }
+
+    function showWidthNumbersOnlyPopup(targetItem) {
+        if (targetItem) {
+            var p = targetItem.mapToItem(rootWindow.contentItem, 0, targetItem.height + (4 * scaleFactor))
+            var margin = 8 * scaleFactor
+            var maxX = Math.max(margin, rootWindow.width - widthNumbersPopup.width - margin)
+            var maxY = Math.max(margin, rootWindow.height - widthNumbersPopup.height - margin)
+            widthNumbersPopup.x = Math.max(margin, Math.min(p.x, maxX))
+            widthNumbersPopup.y = Math.max(margin, Math.min(p.y, maxY))
+        }
+        widthNumbersPopup.close()
+        widthNumbersPopup.open()
+        widthNumbersPopupTimer.restart()
+    }
+
+    function clearActiveEditorFocus() {
+        var focusedItem = activeFocusItem
+        if (focusedItem && focusedItem !== rootWindow && focusedItem.focus !== undefined) {
+            focusedItem.focus = false
+        }
+        if (contentItem) {
+            contentItem.forceActiveFocus(Qt.ShortcutFocusReason)
+        } else {
+            forceActiveFocus(Qt.ShortcutFocusReason)
+        }
+    }
+
+    function openConfirmation(actionId, messageText) {
+        confirmAction = String(actionId || "")
+        confirmMessage = String(messageText || "Are you sure?")
+        confirmDialog.open()
+    }
+
+    function runConfirmedAction() {
+        var actionId = confirmAction
+        confirmDialog.close()
+        if (actionId === "cancelProcess") {
+            backend.cancelCurrentOperation()
+        } else if (actionId === "headerBack") {
+            if (processState === "selecting") {
+                backend.selectDifferentFile()
+            } else {
+                backend.convertAnotherFile()
+            }
+        } else if (actionId === "batchReviewBack") {
+            backend.convertAnotherFile()
+        }
+        confirmAction = ""
+    }
+
+    function scrollConvertingStatusListToBottom() {
+        if (!convertingBatchScroll || !convertingBatchScroll.contentItem) {
+            return
+        }
+        var flick = convertingBatchScroll.contentItem
+        if (flick.contentY === undefined || flick.contentHeight === undefined) {
+            return
+        }
+        var viewportHeight = flick.height !== undefined ? flick.height : 0
+        var maxY = Math.max(0, flick.contentHeight - viewportHeight)
+        flick.contentY = maxY
+    }
+
+    function anchorConvertingStatusToRecent() {
+        if (!convertingBatchScroll || !convertingBatchScroll.contentItem) {
+            return
+        }
+        var flick = convertingBatchScroll.contentItem
+        if (flick.contentY === undefined || flick.contentHeight === undefined) {
+            return
+        }
+        var viewportHeight = flick.height !== undefined ? flick.height : 0
+        var maxY = Math.max(0, flick.contentHeight - viewportHeight)
+        var lastCompletedIndex = -1
+        if (batchFileStatuses && batchFileStatuses.length > 0) {
+            for (var i = 0; i < batchFileStatuses.length; i++) {
+                var s = String(batchFileStatuses[i] || "")
+                if (s === "Done" || s === "Failed" || s === "Cancelled") {
+                    lastCompletedIndex = i
+                }
+            }
+        }
+        var targetIndex = lastCompletedIndex >= 0
+                        ? lastCompletedIndex
+                        : Math.max(0, Math.min(Math.max(0, selectedFiles.length - 1), currentBatchIndex))
+        var rowHeight = 22 * scaleFactor
+        if (convertingBatchContent && convertingBatchContent.children && convertingBatchContent.children.length > 0) {
+            var firstRow = convertingBatchContent.children[0]
+            if (firstRow && firstRow.height !== undefined && firstRow.height > 0) {
+                rowHeight = firstRow.height + convertingBatchContent.spacing
+            }
+        }
+        var rowStep = Math.max(10 * scaleFactor, rowHeight)
+        var targetY = targetIndex * rowStep
+        flick.contentY = Math.max(0, Math.min(maxY, targetY))
+    }
+
+    function queueJumpFormatRowsToIndex(targetIndex) {
+        formatRowsRestorePending = true
+        Qt.callLater(function() {
+            if (formatRowsListView && formatRowsListView.count > 0) {
+                var idx = Math.max(0, Math.min(targetIndex, formatRowsListView.count - 1))
+                formatRowsListView.positionViewAtIndex(idx, ListView.Center)
+            }
+            Qt.callLater(function() {
+                if (formatRowsListView && formatRowsListView.count > 0) {
+                    var idx = Math.max(0, Math.min(targetIndex, formatRowsListView.count - 1))
+                    formatRowsListView.positionViewAtIndex(idx, ListView.Center)
+                    formatRowsSavedContentY = formatRowsListView.contentY
+                }
+                formatRowsRestorePending = false
+            })
+        })
+    }
+
+    function rememberBatchOutputsScroll() {
+        if (batchOutputsListView) {
+            batchOutputsSavedContentY = batchOutputsListView.contentY
+        }
+    }
+
     function hasInvalidBatchNamesInModel() {
         if (!batchOutputs) {
             return false
@@ -150,6 +375,43 @@ Window {
             }
         }
         return false
+    }
+
+    function hasBatchOutputConflictsInModel() {
+        if (!batchOutputs || batchOutputs.length === 0) {
+            return false
+        }
+        return backend.estimateBatchOutputConflicts(batchOutputs).length > 0
+    }
+
+    function batchOutputConflicts() {
+        if (!batchOutputs || batchOutputs.length === 0) {
+            return []
+        }
+        return backend.estimateBatchOutputConflicts(batchOutputs)
+    }
+
+    function batchOutputConflictSummary(limit) {
+        var conflicts = batchOutputConflicts()
+        if (!conflicts || conflicts.length === 0) {
+            return ""
+        }
+        var maxLines = Math.max(1, limit || 4)
+        var lines = []
+        var seen = {}
+        for (var i = 0; i < conflicts.length; i++) {
+            var path = String(conflicts[i].path || "")
+            if (path.length === 0 || seen[path]) {
+                continue
+            }
+            seen[path] = true
+            lines.push("- " + path)
+            if (lines.length >= maxLines) {
+                break
+            }
+        }
+        var hidden = Math.max(0, conflicts.length - lines.length)
+        return lines.join("\n") + (hidden > 0 ? ("\n...and " + hidden + " more conflict(s)") : "")
     }
 
     function batchFilesDescription() {
@@ -188,6 +450,27 @@ Window {
         var idx = typeComboBox.model.indexOf(selectionType);
         if (idx >= 0 && typeComboBox.currentIndex !== idx) {
             typeComboBox.currentIndex = idx;
+        }
+    }
+
+    Connections {
+        target: backend
+        function onFormatModelChanged() {
+            if (processState !== "formatCreate") {
+                return
+            }
+            if (formatRowsJumpToIndexNextChange >= 0) {
+                var jumpIndex = formatRowsJumpToIndexNextChange
+                formatRowsJumpToIndexNextChange = -1
+                Qt.callLater(function() {
+                    rootWindow.queueJumpFormatRowsToIndex(jumpIndex)
+                })
+                return
+            }
+            var keepY = formatRowsScrollToBottomNextChange ? 1000000000 : formatRowsSavedContentY
+            formatRowsScrollToBottomNextChange = false
+            formatRowsSavedContentY = keepY
+            queueRestoreListContentY(formatRowsListView, keepY)
         }
     }
 
@@ -273,12 +556,174 @@ Window {
         }
     }
 
+    Popup {
+        id: columnLettersPopup
+        modal: false
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        padding: 0
+        x: 16 * scaleFactor
+        y: 16 * scaleFactor
+        width: 220 * scaleFactor
+        height: 48 * scaleFactor
+        z: 300
+        background: Item {}
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#3a1f1f"
+            border.color: "#dc2626"
+            border.width: 1
+            radius: 5
+
+            Text {
+                anchors.centerIn: parent
+                text: "You can only enter letters."
+                color: "#fee2e2"
+                font.pixelSize: 10 * scaleFactor
+                font.bold: true
+            }
+        }
+    }
+
+    Timer {
+        id: columnLettersPopupTimer
+        interval: 1200
+        repeat: false
+        onTriggered: columnLettersPopup.close()
+    }
+
+    Popup {
+        id: widthNumbersPopup
+        modal: false
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        padding: 0
+        x: 16 * scaleFactor
+        y: 16 * scaleFactor
+        width: 220 * scaleFactor
+        height: 48 * scaleFactor
+        z: 300
+        background: Item {}
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#3a1f1f"
+            border.color: "#dc2626"
+            border.width: 1
+            radius: 5
+
+            Text {
+                anchors.centerIn: parent
+                text: "You can only enter numbers."
+                color: "#fee2e2"
+                font.pixelSize: 10 * scaleFactor
+                font.bold: true
+            }
+        }
+    }
+
+    Timer {
+        id: widthNumbersPopupTimer
+        interval: 1200
+        repeat: false
+        onTriggered: widthNumbersPopup.close()
+    }
+
+    Popup {
+        id: confirmDialog
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        anchors.centerIn: parent
+        width: Math.min(rootWindow.width - (32 * scaleFactor), 320 * scaleFactor)
+        height: 160 * scaleFactor
+        padding: 0
+        z: 350
+        background: Item {}
+
+        Rectangle {
+            anchors.fill: parent
+            color: themePanel
+            border.color: themeLayer2
+            border.width: 1
+            radius: 6
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12 * scaleFactor
+                spacing: 12 * scaleFactor
+
+                Text {
+                    text: "Confirm"
+                    color: themeText
+                    font.family: appFontFamily
+                    font.pixelSize: 14 * scaleFactor
+                    font.bold: true
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                    text: confirmMessage
+                    color: themeText
+                    font.family: appFontFamily
+                    font.pixelSize: 11 * scaleFactor
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8 * scaleFactor
+
+                    PixelButton {
+                        sliceLeft: 5
+                        sliceRight: 5
+                        sliceTop: 4
+                        sliceBottom: 4
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 36 * scaleFactor
+                        text: "No"
+                        textPixelSize: 11 * scaleFactor
+                        fallbackNormal: themePanel
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        textColor: themeText
+                        borderColor: themeLayer3
+                        onClicked: confirmDialog.close()
+                    }
+
+                    PixelButton {
+                        sliceLeft: 5
+                        sliceRight: 5
+                        sliceTop: 4
+                        sliceBottom: 4
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 36 * scaleFactor
+                        text: "Yes"
+                        textPixelSize: 11 * scaleFactor
+                        fallbackNormal: themeLayer3
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        textColor: themeText
+                        borderColor: themeLayer3
+                        onClicked: rootWindow.runConfirmedAction()
+                    }
+                }
+            }
+        }
+    }
+
 
     ColumnLayout {
         anchors.fill: parent
         anchors.leftMargin: 20 * scaleFactor
         anchors.rightMargin: 20 * scaleFactor
-        anchors.bottomMargin: (processState === "selecting" ? 18 : 20) * scaleFactor
+        anchors.bottomMargin: ((processState === "converting" || processState === "creating")
+                               ? 72
+                               : (processState === "selecting" ? 18 : 20)) * scaleFactor
         anchors.topMargin: ((20 - (12 * headerCompress)) * scaleFactor) + headerReservedTopSpace
         spacing: (20 - (8 * headerCompress)) * scaleFactor
 
@@ -286,7 +731,7 @@ Window {
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
             spacing: (10 - (4 * headerCompress)) * scaleFactor
-            visible: processState !== "batchReview" && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate" && !compactHeaderMode
+            visible: processState !== "batchReview" && processState !== "converting" && processState !== "creating" && processState !== "complete" && processState !== "formatDesigner" && processState !== "formatCreate" && !compactHeaderMode
 
             AnimatedImage {
                 id: copywriting
@@ -337,7 +782,9 @@ Window {
 
 
             MouseArea {
+                id: selectFileArea
                 anchors.fill: parent
+                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     backend.selectFile()
@@ -381,14 +828,26 @@ Window {
 
             Rectangle {
                 anchors.fill: parent
-                color: dropArea.containsDrag ? "#cce7ff" : (parent.hovered ? "#e0e7ff" : "transparent")
-                border.color: dropArea.containsDrag ? themeLayer3 : (parent.hovered ? themeLayer3 : themeLayer2)
-                border.width: dropArea.containsDrag ? 3 : (parent.hovered ? 2 : 2)
+                color: dropArea.containsDrag ? "#cce7ff" : (selectFileArea.containsMouse ? "#e0e7ff" : "transparent")
+                border.color: dropArea.containsDrag ? themeLayer3 : (selectFileArea.containsMouse ? themeLayer3 : themeLayer2)
+                border.width: dropArea.containsDrag ? 3 : (selectFileArea.containsMouse ? 2 : 2)
                 radius: 10
-                opacity: dropArea.containsDrag ? 0.4 : (parent.hovered ? 0.5 : 0)
+                opacity: dropArea.containsDrag ? 0.4 : (selectFileArea.containsMouse ? 0.5 : 0)
                 Behavior on opacity { NumberAnimation { duration: 200 } }
                 Behavior on color { ColorAnimation { duration: 200 } }
                 Behavior on border.width { NumberAnimation { duration: 200 } }
+            }
+
+            AnimatedImage {
+                anchors.centerIn: parent
+                width: parent.width + (15 * scaleFactor)
+                height: parent.height + (15 * scaleFactor)
+                source: "images/ui/dropzone_fx.gif"
+                playing: processState === "idle" && !selectFileArea.containsMouse
+                fillMode: Image.Stretch
+                smooth: false
+                mipmap: false
+                opacity: dropArea.containsDrag ? 1.0 : 0.85
             }
 
             ColumnLayout {
@@ -411,8 +870,6 @@ Window {
                         anchors.centerIn: parent
                     }
                 }
-
-
 
                 Text {
                     text: dropArea.containsDrag ? "Drop XML file(s) or folder here" : "Click to select XML file(s)"
@@ -685,15 +1142,19 @@ Window {
             }
 
             Text {
+                id: createFormatLink
                 text: "Create Format"
-                color: "white"
+                color: createFormatArea.containsMouse ? themeLayer3 : "white"
                 font.family: appFontFamily
                 font.pixelSize: 12 * scaleFactor
                 font.bold: true
-                Layout.alignment: Qt.AlignHCenter
+                Layout.alignment: Qt.AlignRight
+                horizontalAlignment: Text.AlignRight
 
                 MouseArea {
+                    id: createFormatArea
                     anchors.fill: parent
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         var newIndex = backend.createFormatDraft()
@@ -905,7 +1366,14 @@ Window {
                     fallbackPressed: themeLayer1
                     fallbackDisabled: "#9ca3af"
                     borderColor: themeLayer3
-                    onClicked: backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
+                    onClicked: {
+                        var newIndex = backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
+                        if (newIndex >= 0) {
+                            rootWindow.formatEditorFocusType = ""
+                            rootWindow.formatDesignerSelectedRowIndex = -1
+                            rootWindow.markAndJumpFormatRow(newIndex)
+                        }
+                    }
                 }
             }
 
@@ -984,6 +1452,7 @@ Window {
                 clip: true
 
                 ListView {
+                    id: formatRowsListView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     anchors.fill: parent
@@ -993,6 +1462,21 @@ Window {
                     model: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
                         ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].columns
                         : []
+                    onModelChanged: {
+                        if (formatRowsJumpToIndexNextChange >= 0 || formatRowsRestorePending) {
+                            return
+                        }
+                        var keepY = formatRowsSavedContentY
+                        queueRestoreListContentY(formatRowsListView, keepY)
+                    }
+                    onContentYChanged: {
+                        if (!formatRowsRestorePending) {
+                            formatRowsSavedContentY = contentY
+                        }
+                    }
+                    onMovementEnded: {
+                        formatRowsSavedContentY = contentY
+                    }
 
                     delegate: Rectangle {
                         property int rowIndex: index
@@ -1001,7 +1485,9 @@ Window {
                         radius: 5
                         function applyFormulaTemplate(templateText) {
                             valueField.text = templateText
-                            backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "value", templateText)
+                            rootWindow.prepareFormatRowsModelChange(false)
+                            var updatedIndex = backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "value", templateText)
+                            rootWindow.markAndJumpFormatRow(updatedIndex)
                             valueField.forceActiveFocus()
                             valueField.cursorPosition = valueField.text.length
                         }
@@ -1021,7 +1507,12 @@ Window {
                             }
                         }
                         color: rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer1 : themePanel
-                        border.color: rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer3 : themeLayer2
+                        border.color: rowExpanded
+                                      ? "#dc2626"
+                                      : (rootWindow.formatRowsHighlightIndex === index
+                                      && rootWindow.formatEditorFocusType === ""
+                                      ? "#dc2626"
+                                      : (rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer3 : themeLayer2))
                         border.width: 1
 
                         RowLayout {
@@ -1040,15 +1531,50 @@ Window {
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
+                                property bool submittedByEnter: false
+                                onTextEdited: {
+                                    var hadInvalid = /[^A-Za-z]/.test(text)
+                                    var cleaned = text.replace(/[^A-Za-z]/g, "").toUpperCase()
+                                    if (cleaned !== text) {
+                                        text = cleaned
+                                        if (hadInvalid) {
+                                            rootWindow.showColumnLettersOnlyPopup(colField)
+                                        }
+                                    }
+                                }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
                                         rootWindow.formatEditorFocusType = "column"
                                         cursorPosition = text.length
                                     }
                                 }
-                                onEditingFinished: backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                onEditingFinished: {
+                                    if (submittedByEnter) {
+                                        submittedByEnter = false
+                                        return
+                                    }
+                                    var normalized = text.replace(/[^A-Za-z]/g, "").toUpperCase()
+                                    if (normalized.length === 0) {
+                                        text = String(modelData.col || "A")
+                                        return
+                                    }
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                }
                                 onAccepted: {
-                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    submittedByEnter = true
+                                    var normalized = text.replace(/[^A-Za-z]/g, "").toUpperCase()
+                                    if (normalized.length === 0) {
+                                        text = String(modelData.col || "A")
+                                        focus = false
+                                        rootWindow.formatDesignerSelectedRowIndex = -1
+                                        rootWindow.formatEditorFocusType = ""
+                                        return
+                                    }
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
                                 }
@@ -1075,6 +1601,7 @@ Window {
                                 visible: !rowExpanded || activeFocus || (popup && popup.visible)
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: (activeFocus || (popup && popup.visible)) ? 3 : 0
+                                property bool sourceEditingActive: activeFocus || (popup && popup.visible)
                                 fallbackNormal: themeInset
                                 fallbackFocus: themeLayer1
                                 fallbackOpen: themeLayer2
@@ -1083,12 +1610,21 @@ Window {
                                 fallbackText: themeText
                                 fallbackPlaceholder: "white"
                                 fallbackPopup: themePanel
+                                onSourceEditingActiveChanged: {
+                                    if (sourceEditingActive) {
+                                        rootWindow.formatEditorFocusType = "source"
+                                    } else if (rootWindow.formatEditorFocusType === "source") {
+                                        rootWindow.formatEditorFocusType = ""
+                                    }
+                                }
                                 onActivated: function(comboIndex) {
                                     if (formatCreatePanel.selectedFormatIndex < 0 || rowIndex < 0 || comboIndex < 0) {
                                         return
                                     }
                                     var mappedType = comboIndex === 1 ? "formula" : (comboIndex === 2 ? "empty" : "data")
-                                    backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                 }
                                 Keys.onEscapePressed: function(event) {
@@ -1111,6 +1647,7 @@ Window {
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: 11 * scaleFactor
                                 placeholderText: ""
+                                property bool submittedByEnter: false
                                 hasError: {
                                     var raw = valueField.text ? valueField.text.trim() : ""
                                     return (modelData.type === "data" && valueField.enabled && raw.length > 0 && isNaN(parseInt(raw)))
@@ -1122,9 +1659,33 @@ Window {
                                         cursorPosition = text.length
                                     }
                                 }
-                                onEditingFinished: backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                onEditingFinished: {
+                                    if (submittedByEnter) {
+                                        submittedByEnter = false
+                                        return
+                                    }
+                                    var raw = text.trim()
+                                    if (raw.length === 0) {
+                                        text = String(modelData.value || "")
+                                        return
+                                    }
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                }
                                 onAccepted: {
-                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    submittedByEnter = true
+                                    var raw = text.trim()
+                                    if (raw.length === 0) {
+                                        text = String(modelData.value || "")
+                                        focus = false
+                                        rootWindow.formatDesignerSelectedRowIndex = -1
+                                        rootWindow.formatEditorFocusType = ""
+                                        return
+                                    }
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
                                 }
@@ -1196,6 +1757,71 @@ Window {
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: 11 * scaleFactor
+                                property bool submittedByEnter: false
+                                function commitWidthAndClose() {
+                                    var raw = text.trim()
+                                    if (raw.length === 0) {
+                                        text = String(modelData.width || 14)
+                                        rootWindow.markAndJumpFormatRow(index)
+                                        submittedByEnter = true
+                                        focus = false
+                                        rootWindow.formatDesignerSelectedRowIndex = -1
+                                        rootWindow.formatEditorFocusType = ""
+                                        return
+                                    }
+                                    var widthValue = parseInt(raw)
+                                    if (isNaN(widthValue)) {
+                                        widthValue = 14
+                                    }
+                                    submittedByEnter = true
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    focus = false
+                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                }
+                                onTextEdited: {
+                                    var hadInvalid = /[^0-9]/.test(text)
+                                    var cleaned = text.replace(/[^0-9]/g, "")
+                                    if (cleaned !== text) {
+                                        text = cleaned
+                                        if (hadInvalid) {
+                                            rootWindow.showWidthNumbersOnlyPopup(widthField)
+                                        }
+                                    }
+                                }
+                                Keys.onPressed: function(event) {
+                                    if (event.modifiers & Qt.ControlModifier) {
+                                        return
+                                    }
+                                    if (event.key === Qt.Key_Backspace
+                                            || event.key === Qt.Key_Delete
+                                            || event.key === Qt.Key_Left
+                                            || event.key === Qt.Key_Right
+                                            || event.key === Qt.Key_Home
+                                            || event.key === Qt.Key_End
+                                            || event.key === Qt.Key_Tab
+                                            || event.key === Qt.Key_Return
+                                            || event.key === Qt.Key_Enter
+                                            || event.key === Qt.Key_Escape) {
+                                        return
+                                    }
+                                    if (!event.text || event.text.length === 0) {
+                                        return
+                                    }
+                                    if (!/[0-9]/.test(event.text)) {
+                                        rootWindow.showWidthNumbersOnlyPopup(widthField)
+                                        event.accepted = true
+                                    }
+                                }
+                                Keys.onReturnPressed: function(event) {
+                                    commitWidthAndClose()
+                                    event.accepted = true
+                                }
+                                Keys.onEnterPressed: function(event) {
+                                    commitWidthAndClose()
+                                    event.accepted = true
+                                }
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
                                         rootWindow.formatEditorFocusType = "width"
@@ -1203,22 +1829,25 @@ Window {
                                     }
                                 }
                                 onEditingFinished: {
+                                    if (submittedByEnter) {
+                                        submittedByEnter = false
+                                        return
+                                    }
                                     var raw = text.trim()
+                                    if (raw.length === 0) {
+                                        text = String(modelData.width || 14)
+                                        return
+                                    }
                                     var widthValue = raw.length > 0 ? parseInt(raw) : 14
                                     if (isNaN(widthValue)) {
                                         widthValue = 14
                                     }
-                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
                                 }
                                 onAccepted: {
-                                    var raw = text.trim()
-                                    var widthValue = raw.length > 0 ? parseInt(raw) : 14
-                                    if (isNaN(widthValue)) {
-                                        widthValue = 14
-                                    }
-                                    backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
-                                    focus = false
-                                    rootWindow.formatDesignerSelectedRowIndex = -1
+                                    commitWidthAndClose()
                                 }
                                 Keys.onEscapePressed: function(event) {
                                     focus = false
@@ -1243,7 +1872,11 @@ Window {
                                 fallbackHover: "#b91c1c"
                                 fallbackPressed: "#991b1b"
                                 borderColor: "#dc2626"
-                                onClicked: backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
+                                onClicked: {
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    rootWindow.markFormatRowHighlight(-1)
+                                    backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
+                                }
                             }
                         }
 
@@ -1319,6 +1952,7 @@ Window {
             spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
+            Layout.fillHeight: true
 
             Text {
                 text: "CubeFlow"
@@ -1348,6 +1982,7 @@ Window {
                     contentWidth: availableWidth
 
                     Column {
+                        id: convertingBatchContent
                         width: Math.max(0, convertingBatchScroll.availableWidth)
                         spacing: 5 * scaleFactor
 
@@ -1392,7 +2027,7 @@ Window {
             Text {
                 text: "Converting File"
                 color: "white"
-                font.pixelSize: 24 * scaleFactor
+                font.pixelSize: 20 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -1406,8 +2041,8 @@ Window {
 
             Text {
                 text: selectedFiles.length > 0
-                    ? "Processing: " + currentFileName + " (" + (currentBatchIndex + 1) + " of " + totalBatchFiles + ")"
-                    : "Using " + selectionType + " conversion"
+                    ? ("Processing: " + currentFileName)
+                    : ("Using " + selectionType + " conversion")
                 font.pixelSize: 12 * scaleFactor
                 color: themeTextSecondary
                 Layout.alignment: Qt.AlignHCenter
@@ -1417,12 +2052,27 @@ Window {
                 wrapMode: Text.NoWrap
             }
 
+            Text {
+                visible: selectedFiles.length > 0 && totalBatchFiles > 0
+                text: "(" + (Math.min(totalBatchFiles, currentBatchIndex + 1)) + " of " + totalBatchFiles + ")"
+                font.pixelSize: 12 * scaleFactor
+                color: themeTextSecondary
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+            }
+
             BusyIndicator {
                 Layout.alignment: Qt.AlignHCenter
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: themeLayer3
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
             }
         }
 
@@ -1431,12 +2081,15 @@ Window {
             visible: processState === "creating"
             spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            Layout.fillHeight: true
 
             Text {
                 text: "Creating New Excel File"
                 font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
+                color: themeText
             }
 
             Text {
@@ -1445,6 +2098,105 @@ Window {
                     : "Almost done, generating your output file..."
                 font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
+                color: themeText
+            }
+
+            Rectangle {
+                visible: isBatch && (batchOutputs.length > 0 || selectedFiles.length > 0)
+                Layout.fillWidth: true
+                Layout.preferredHeight: 150 * scaleFactor
+                color: themePanel
+                border.color: themeLayer2
+                border.width: 1
+                radius: 5
+                clip: true
+
+                ScrollView {
+                    id: creatingBatchScroll
+                    anchors.fill: parent
+                    anchors.margins: 8 * scaleFactor
+                    clip: true
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    contentWidth: availableWidth
+
+                    Column {
+                        width: Math.max(0, creatingBatchScroll.availableWidth)
+                        spacing: 5 * scaleFactor
+
+                        Repeater {
+                            model: batchOutputs.length > 0 ? batchOutputs.length : selectedFiles.length
+
+                            RowLayout {
+                                width: creatingBatchScroll.availableWidth
+                                spacing: 6 * scaleFactor
+                                clip: true
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (batchOutputs.length > index && batchOutputs[index].sourceFile)
+                                          ? String(batchOutputs[index].sourceFile)
+                                          : baseName(selectedFiles[index])
+                                    font.pixelSize: 11 * scaleFactor
+                                    elide: Text.ElideMiddle
+                                    wrapMode: Text.NoWrap
+                                    clip: true
+                                    color: themeText
+                                }
+
+                                Text {
+                                    Layout.preferredWidth: 88 * scaleFactor
+                                    Layout.maximumWidth: 88 * scaleFactor
+                                    horizontalAlignment: Text.AlignRight
+                                    text: {
+                                        var total = batchOutputs.length > 0 ? batchOutputs.length : selectedFiles.length
+                                        if (total <= 0) return "Queued"
+                                        var saveIndex = Math.max(0, Math.min(total, Math.ceil((progress / 100.0) * total)))
+                                        if (index < saveIndex) return "Saved"
+                                        if (index === saveIndex && progress < 100) return "Saving"
+                                        return "Queued"
+                                    }
+                                    font.pixelSize: 11 * scaleFactor
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    clip: true
+                                    color: text === "Saved" ? "#059669"
+                                          : text === "Saving" ? themeLayer3
+                                          : "#6b7280"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                visible: isBatch && totalBatchFiles > 0 && batchOutputs.length > 0
+                text: {
+                    var saveIndex = Math.max(1, Math.min(totalBatchFiles, Math.ceil((progress / 100.0) * totalBatchFiles)))
+                    var fileIdx = Math.max(0, Math.min(batchOutputs.length - 1, saveIndex - 1))
+                    var fileName = batchOutputs[fileIdx] && batchOutputs[fileIdx].sourceFile ? batchOutputs[fileIdx].sourceFile : ""
+                    return "Saving: " + fileName
+                }
+                font.pixelSize: 12 * scaleFactor
+                color: themeTextSecondary
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                wrapMode: Text.NoWrap
+            }
+
+            Text {
+                visible: isBatch && totalBatchFiles > 0
+                text: {
+                    var saveIndex = Math.max(1, Math.min(totalBatchFiles, Math.ceil((progress / 100.0) * totalBatchFiles)))
+                    return "(" + saveIndex + " of " + totalBatchFiles + ")"
+                }
+                font.pixelSize: 12 * scaleFactor
+                color: themeTextSecondary
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
             }
 
             BusyIndicator {
@@ -1452,7 +2204,12 @@ Window {
                 running: true
                 implicitWidth: 64 * scaleFactor
                 implicitHeight: 64 * scaleFactor
-                Material.accent: themeLayer3
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
             }
         }
 
@@ -1496,6 +2253,48 @@ Window {
                 color: themeText
                 font.pixelSize: 11 * scaleFactor
                 font.bold: true
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                visible: hasBatchOutputConflictsInModel()
+                color: "#3a1f1f"
+                border.color: "#dc2626"
+                border.width: 1
+                radius: 5
+                implicitHeight: conflictInfoColumn.implicitHeight + (12 * scaleFactor)
+
+                ColumnLayout {
+                    id: conflictInfoColumn
+                    anchors.fill: parent
+                    anchors.margins: 6 * scaleFactor
+                    spacing: 4 * scaleFactor
+
+                    Text {
+                        text: "Conflicting output paths detected"
+                        color: "#fecaca"
+                        font.pixelSize: 11 * scaleFactor
+                        font.bold: true
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
+
+                    Text {
+                        text: batchOutputConflictSummary(4)
+                        color: "#fee2e2"
+                        font.pixelSize: 10 * scaleFactor
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
+
+                    Text {
+                        text: "Change file name or save folder so each output path is unique."
+                        color: "#fecaca"
+                        font.pixelSize: 10 * scaleFactor
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
+                }
             }
 
             Rectangle {
@@ -1628,17 +2427,35 @@ Window {
                 clip: true
 
                 ListView {
+                    id: batchOutputsListView
                     anchors.fill: parent
                     anchors.margins: 8 * scaleFactor
                     spacing: 8 * scaleFactor
                     clip: true
                     model: batchOutputs
+                    onModelChanged: {
+                        var keepY = batchOutputsSavedContentY
+                        queueRestoreListContentY(batchOutputsListView, keepY)
+                    }
+                    onContentYChanged: {
+                        if (!batchOutputsRestorePending) {
+                            batchOutputsSavedContentY = contentY
+                        }
+                    }
+                    onMovementEnded: {
+                        batchOutputsSavedContentY = contentY
+                    }
 
                     delegate: Rectangle {
                         width: ListView.view.width
                         color: themePanel
                         radius: 5
-                        border.color: themeLayer2
+                        property bool batchRowEditing: outputFileNameField.activeFocus
+                                                      || extCombo.activeFocus
+                                                      || (extCombo.popup && extCombo.popup.visible)
+                                                      || outputSaveDirField.activeFocus
+                                                      || rootWindow.batchRowHighlightIndex === index
+                        border.color: batchRowEditing ? "#dc2626" : themeLayer2
                         border.width: 1
                         implicitHeight: outputItemColumn.implicitHeight + (12 * scaleFactor)
 
@@ -1690,6 +2507,7 @@ Window {
                                         onEditingFinished: {
                                             batchFileNameDrafts[index] = text
                                             batchFileNameDrafts = Object.assign({}, batchFileNameDrafts)
+                                            rootWindow.rememberBatchOutputsScroll()
                                             backend.updateBatchOutputFileName(index, text + "." + extCombo.currentText)
                                         }
                                     }
@@ -1713,6 +2531,7 @@ Window {
                                         fallbackPopup: themePanel
 
                                         onCurrentTextChanged: {
+                                            rootWindow.rememberBatchOutputsScroll()
                                             backend.updateBatchOutputFileName(index, stripXlsx(modelData.fileName) + "." + currentText)
                                         }
                                     }
@@ -1763,8 +2582,14 @@ Window {
                                         fallbackNormal: themeInset
                                         fallbackFocus: themeInset
                                         fallbackDisabled: themeInset
-                                        onTextEdited: backend.updateBatchOutputDirectory(index, text)
-                                        onEditingFinished: backend.updateBatchOutputDirectory(index, text)
+                                        onTextEdited: {
+                                            rootWindow.rememberBatchOutputsScroll()
+                                            backend.updateBatchOutputDirectory(index, text)
+                                        }
+                                        onEditingFinished: {
+                                            rootWindow.rememberBatchOutputsScroll()
+                                            backend.updateBatchOutputDirectory(index, text)
+                                        }
                                     }
 
                                     Text {
@@ -1794,7 +2619,11 @@ Window {
                                     fallbackHover: themeLayer2
                                     fallbackPressed: themeLayer1
                                     borderColor: themeLayer3
-                                    onClicked: backend.browseBatchOutputDirectory(index)
+                                    onClicked: {
+                                        rootWindow.clearActiveEditorFocus()
+                                        rootWindow.batchRowHighlightIndex = index
+                                        backend.browseBatchOutputDirectory(index)
+                                    }
                                 }
                             }
                         }
@@ -1828,7 +2657,7 @@ Window {
                         fallbackPressed: themeLayer1
                         textColor: themeText
                         borderColor: themeLayer3
-                        onClicked: backend.convertAnotherFile()
+                        onClicked: rootWindow.openConfirmation("batchReviewBack", "Go back and discard these batch output edits?")
                     }
 
                     PixelButton {
@@ -1840,7 +2669,10 @@ Window {
                         Layout.preferredHeight: 40 * scaleFactor
                         text: "Confirm"
                         textPixelSize: 13 * scaleFactor
-                        enabled: batchOutputs.length > 0 && !hasInvalidBatchNamesInModel() && !hasInvalidBatchSaveDirsInModel()
+                        enabled: batchOutputs.length > 0
+                              && !hasInvalidBatchNamesInModel()
+                              && !hasInvalidBatchSaveDirsInModel()
+                              && !hasBatchOutputConflictsInModel()
                         fallbackNormal: themeLayer3
                         fallbackHover: themeLayer2
                         fallbackPressed: themeLayer1
@@ -1857,12 +2689,16 @@ Window {
             visible: processState === "complete"
             spacing: 20 * scaleFactor
             Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
 
             Text {
                 text: "Conversion Complete!"
                 font.pixelSize: 24 * scaleFactor
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                color: themeText
             }
             Text {
                 text: isBatch
@@ -1870,6 +2706,10 @@ Window {
                     : "Your file has been successfully converted using " + selectionType
                 font.pixelSize: 14 * scaleFactor
                 Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                color: themeText
             }
 
             PixelButton {
@@ -1884,6 +2724,7 @@ Window {
                 fallbackNormal: themeLayer3
                 fallbackHover: themeLayer2
                 fallbackPressed: themeLayer1
+                textColor: themeText
                 borderColor: themeLayer3
                 onClicked: backend.convertAnotherFile()
             }
@@ -1891,7 +2732,35 @@ Window {
     }
 
     Item {
-        visible: compactHeaderMode && processState !== "converting" && processState !== "formatDesigner" && processState !== "formatCreate"
+        visible: processState === "converting" || processState === "creating"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 20 * scaleFactor
+        anchors.rightMargin: 20 * scaleFactor
+        anchors.bottomMargin: 16 * scaleFactor
+        height: 40 * scaleFactor
+        z: 120
+
+        PixelButton {
+            sliceLeft: 5
+            sliceRight: 5
+            sliceTop: 4
+            sliceBottom: 4
+            anchors.fill: parent
+            text: "Cancel"
+            textPixelSize: 12 * scaleFactor
+            fallbackNormal: themePanel
+            fallbackHover: themeLayer2
+            fallbackPressed: themeLayer1
+            textColor: themeText
+            borderColor: themeLayer3
+            onClicked: rootWindow.openConfirmation("cancelProcess", "Cancel the current process?")
+        }
+    }
+
+    Item {
+        visible: compactHeaderMode && processState !== "converting" && processState !== "creating" && processState !== "complete" && processState !== "formatDesigner" && processState !== "formatCreate"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -1980,13 +2849,7 @@ Window {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (processState === "selecting") {
-                    backend.selectDifferentFile()
-                } else {
-                    backend.convertAnotherFile()
-                }
-            }
+            onClicked: rootWindow.openConfirmation("headerBack", "Go back to the previous screen?")
         }
     }
 }

@@ -1,26 +1,22 @@
-import sys
+﻿import sys
 import os
 import json
 import copy
 import pandas as pd
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings, QTimer
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 
-# Use a non-native Qt Quick Controls style so custom control skins
-# (background/contentItem/indicator) are applied without runtime warnings.
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 os.environ.setdefault("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic")
 
 
-# Add .xlsx if missing
 def ensure_xlsx_extension(file_name):
     if not file_name:
         return "output.xlsx"
     return file_name if file_name.lower().endswith(".xlsx") else f"{file_name}.xlsx"
 
-# Clean batch output file name
 def normalize_batch_output_name(file_name):
     raw_name = (file_name or "").strip()
     if not raw_name:
@@ -34,7 +30,6 @@ def normalize_batch_output_name(file_name):
         return ""
     return f"{raw_name}.xlsx"
 
-# Check if batch file name is valid
 def get_invalid_batch_name_message(file_name):
     raw_name = (file_name or "").strip()
     if raw_name.lower().endswith(".xlsx"):
@@ -56,7 +51,6 @@ def get_invalid_batch_name_message(file_name):
         return "File name cannot end with a dot or space."
     return ""
 
-# Check if save folder is valid
 def get_invalid_output_directory_message(directory):
     folder = (directory or "").strip()
     if not folder:
@@ -70,7 +64,6 @@ def get_invalid_output_directory_message(directory):
     return ""
 
 
-# Convert Excel column text to number
 def excel_col_to_index(col_name):
     name = (col_name or "").strip().upper()
     if not name or not name.isalpha():
@@ -81,7 +74,6 @@ def excel_col_to_index(col_name):
     return idx - 1
 
 
-# Convert column number to Excel text
 def index_to_excel_col(idx):
     n = max(0, int(idx))
     out = ""
@@ -94,14 +86,12 @@ def index_to_excel_col(idx):
     return out
 
 
-# Build default batch save path
 def build_default_batch_output_path(xml_file):
     source_dir = os.path.dirname(xml_file)
     source_base = os.path.splitext(os.path.basename(xml_file))[0]
-    return os.path.join(source_dir, f"{source_base}_converted.xlsx")
+    return os.path.join(source_dir, f"{source_base}.xlsx")
 
 
-# Clean path text
 def normalize_path(path):
     if not path:
         return ""
@@ -109,11 +99,12 @@ def normalize_path(path):
     return normalized
 
 
-# Find XML files from selected paths
-def collect_xml_files_from_paths(paths):
+def collect_xml_files_from_paths(paths, should_stop=None):
     collected = []
     seen = set()
     for raw_path in paths:
+        if callable(should_stop) and should_stop():
+            return collected
         path = normalize_path(raw_path)
         if not path:
             continue
@@ -124,7 +115,11 @@ def collect_xml_files_from_paths(paths):
             continue
         if os.path.isdir(path):
             for root, _, files in os.walk(path):
+                if callable(should_stop) and should_stop():
+                    return collected
                 for file_name in files:
+                    if callable(should_stop) and should_stop():
+                        return collected
                     if not file_name.lower().endswith(".xml"):
                         continue
                     full_path = os.path.join(root, file_name)
@@ -135,7 +130,6 @@ def collect_xml_files_from_paths(paths):
     return collected
 
 
-# Ask before overwriting existing files
 def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
     existing = [p for p in paths if os.path.exists(p)]
     if not existing:
@@ -157,9 +151,7 @@ def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
     return result == QMessageBox.StandardButton.Yes
 
 
-# Create Excel file
 def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
-    # Clean data and prepare sheet
     df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
     is_builtin = xml_type in ["Den", "Glacier", "Globe"]
     with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
@@ -172,19 +164,16 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
         ws = writer.sheets[sheet_name]
 
         if not is_builtin:
-            # Styles for user format
             header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#99CC00', 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
             generic_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
             formula_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
             generic_highlight_fmt = workbook.add_format({'num_format': 'General', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
             formula_highlight_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
 
-            # Paint row 1 and row 2 headers
             for header_row in range(2):
                 for c in range(df.shape[1]):
                     ws.write(header_row, c, "", header_fmt)
 
-            # Write user data, color formulas, and highlight rows when seconds are not 00
             for r in range(len(df)):
                 excel_r = start_row + r
                 row_highlight = False
@@ -204,14 +193,12 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                     else:
                         cell_fmt = generic_highlight_fmt if row_highlight else generic_fmt
                         ws.write(excel_r, c, val, cell_fmt)
-            # Use saved column widths from user format
             custom_widths = df.attrs.get("custom_widths", None)
             if isinstance(custom_widths, list):
                 for i, w in enumerate(custom_widths[:df.shape[1]]):
                     ws.set_column(i, i, float(w))
             return
 
-        # Styles for hard coded format
         general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
         text_fmt = workbook.add_format({'num_format': '@', 'border': 1, 'align': 'right'})
         num_fmt = workbook.add_format({'num_format': '0.00', 'border': 1, 'align': 'right'})
@@ -219,7 +206,6 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
         colored_num_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#F2E6FF', 'border': 1, 'align': 'right'})
         black_header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#F2E6FF', 'font_color': 'black', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
 
-        # Header rows for hard coded format
         for r in range(2):
             for c in range(df.shape[1]):
                 val = df.iloc[r, c]
@@ -230,7 +216,6 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 else:
                     ws.write(r, c, val, header_fmt)
 
-        # Data rows for hard coded format
         for r in range(2, len(df)):
             for c in range(df.shape[1]):
                 val = df.iloc[r, c]
@@ -271,7 +256,6 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                     else:
                         ws.write(r, c, val, num_fmt)
 
-        # Highlight row yellow when column A seconds are not 00
         for r in range(2, len(df)):
             cell_value = df.iloc[r, 0]
             if isinstance(cell_value, str):
@@ -318,7 +302,6 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 except Exception:
                     continue
 
-        # Set widths and hidden columns for each hard coded format type
         if xml_type == "Den":
             widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
             hidden_cols = {6: 16.27}
@@ -335,7 +318,6 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 ws.set_column(col, col, w, None, {'hidden': True})
 
 
-# Worker to process XML file data
 class Worker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -347,13 +329,19 @@ class Worker(QObject):
         self.xml_type = xml_type
         self.format_definition = format_definition
         self.current_file_index = 0
+        self.cancel_requested = False
+
+    @pyqtSlot()
+    def request_cancel(self):
+        self.cancel_requested = True
 
     @pyqtSlot()
     def process(self):
-        if self.current_file_index >= len(self.xml_files):
-            return
-        xml_file = self.xml_files[self.current_file_index]
-        try:
+        while self.current_file_index < len(self.xml_files):
+            if self.cancel_requested:
+                self.error.emit("Operation cancelled by user.")
+                return
+            xml_file = self.xml_files[self.current_file_index]
             try:
                 df_xml = pd.read_xml(
                     xml_file,
@@ -363,23 +351,26 @@ class Worker(QObject):
             except Exception as e:
                 self.error.emit(f"Error reading XML {xml_file}: {e}")
                 self.current_file_index += 1
-                self.process()
-                return
+                continue
             self.progress.emit(50)
-            if self.xml_type == "Den":
-                self.process_den_from_df(df_xml, xml_file)
-            elif self.xml_type == "Globe":
-                self.process_globe_from_df(df_xml, xml_file)
-            elif self.xml_type == "Glacier":
-                self.process_glacier_from_df(df_xml, xml_file)
-            elif self.format_definition:
-                self.process_custom_from_df(df_xml, xml_file)
-            else:
-                self.error.emit(f"Format '{self.xml_type}' is not implemented.")
-        except Exception as e:
-            self.error.emit(f"An unexpected error occurred for {xml_file}: {e}")
-            self.current_file_index += 1
-            self.process()
+            try:
+                if self.xml_type == "Den":
+                    self.process_den_from_df(df_xml, xml_file)
+                elif self.xml_type == "Globe":
+                    self.process_globe_from_df(df_xml, xml_file)
+                elif self.xml_type == "Glacier":
+                    self.process_glacier_from_df(df_xml, xml_file)
+                elif self.format_definition:
+                    self.process_custom_from_df(df_xml, xml_file)
+                else:
+                    self.error.emit(f"Format '{self.xml_type}' is not implemented.")
+                    self.current_file_index += 1
+                    continue
+                return
+            except Exception as e:
+                self.error.emit(f"An unexpected error occurred for {xml_file}: {e}")
+                self.current_file_index += 1
+
 
     def process_custom_from_df(self, df, xml_file):
         try:
@@ -501,7 +492,31 @@ class Worker(QObject):
         except Exception as e:
             self.error.emit(f"Glacier processing error: {e}")
 
-# Worker to save one Excel file
+
+class PathDiscoveryWorker(QObject):
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self, paths):
+        super().__init__()
+        self.paths = [normalize_path(p) for p in paths if normalize_path(p)]
+        self.cancel_requested = False
+
+    @pyqtSlot()
+    def request_cancel(self):
+        self.cancel_requested = True
+
+    @pyqtSlot()
+    def process(self):
+        try:
+            xml_paths = collect_xml_files_from_paths(self.paths, should_stop=lambda: self.cancel_requested)
+            if self.cancel_requested:
+                self.error.emit("Operation cancelled by user.")
+                return
+            self.finished.emit(xml_paths)
+        except Exception as e:
+            self.error.emit(f"Failed to scan dropped paths: {e}")
+
 class SaveWorker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -513,10 +528,18 @@ class SaveWorker(QObject):
         self.xml_type = xml_type
         self.save_path = save_path
         self.xml_file = xml_file
+        self.cancel_requested = False
+
+    @pyqtSlot()
+    def request_cancel(self):
+        self.cancel_requested = True
 
     @pyqtSlot()
     def save(self):
         try:
+            if self.cancel_requested:
+                self.error.emit("Operation cancelled by user.")
+                return
             self.progress.emit(90)
             export_dataframe_to_excel(self.df, self.xml_type, self.save_path, self.xml_file)
             self.progress.emit(100)
@@ -526,7 +549,6 @@ class SaveWorker(QObject):
             
 
 
-# Worker to save all batch files
 class BatchSaveWorker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
@@ -536,6 +558,11 @@ class BatchSaveWorker(QObject):
         super().__init__()
         self.batch_results = batch_results
         self.batch_outputs = [dict(item) for item in batch_outputs]
+        self.cancel_requested = False
+
+    @pyqtSlot()
+    def request_cancel(self):
+        self.cancel_requested = True
 
     @pyqtSlot()
     def save_all(self):
@@ -546,6 +573,9 @@ class BatchSaveWorker(QObject):
                 return
 
             for i, result in enumerate(self.batch_results):
+                if self.cancel_requested:
+                    self.error.emit("Operation cancelled by user.")
+                    return
                 output = self.batch_outputs[i]
                 save_path = os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))
                 export_dataframe_to_excel(result["df"], result["xml_type"], save_path, result["xml_file"])
@@ -558,7 +588,6 @@ class BatchSaveWorker(QObject):
             self.error.emit(f"Failed to save batch files: {e}")
 
 
-# Main backend for QML UI
 class Backend(QObject):
     progressUpdated = pyqtSignal(int)
     formatModelChanged = pyqtSignal()
@@ -583,9 +612,12 @@ class Backend(QObject):
         self.save_worker = None
         self.batch_save_thread = None
         self.batch_save_worker = None
+        self.path_scan_thread = None
+        self.path_scan_worker = None
         self.batch_results = []
         self.batch_outputs = []
         self.batch_file_statuses = []
+        self.cancel_requested = False
         self.formats_dir = os.path.join(os.path.dirname(__file__), "formats")
         self.formats_path = os.path.join(self.formats_dir, "format_model.json")
         self.format_save_path = self.formats_path
@@ -747,12 +779,26 @@ class Backend(QObject):
             counter += 1
 
     def _next_column_label(self, columns):
-        idx = len(columns)
-        if idx < 26:
-            return chr(ord("A") + idx)
-        first = chr(ord("A") + ((idx // 26) - 1))
-        second = chr(ord("A") + (idx % 26))
-        return f"{first}{second}"
+        used_indexes = set()
+        if isinstance(columns, list):
+            for row in columns:
+                col_label = self._normalize_column_label((row or {}).get("col", "A"))
+                col_index = excel_col_to_index(col_label)
+                if col_index >= 0:
+                    used_indexes.add(col_index)
+        next_index = 0
+        while next_index in used_indexes:
+            next_index += 1
+        return index_to_excel_col(next_index)
+
+    def _normalize_column_label(self, value):
+        normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())
+        return normalized[:3] if normalized else "A"
+
+    def _sort_format_columns(self, columns):
+        if not isinstance(columns, list) or not columns:
+            return
+        columns.sort(key=lambda row: excel_col_to_index(self._normalize_column_label((row or {}).get("col", "A"))))
 
     def _is_builtin_format_name(self, name):
         return str(name).strip().lower() in ("den", "glacier", "globe")
@@ -822,6 +868,27 @@ class Backend(QObject):
     def refreshBatchFileStatusesProperty(self):
         if self.root:
             self.root.setProperty("batchFileStatuses", self.batch_file_statuses)
+
+    def _stop_thread(self, thread_attr, worker_attr=None, timeout_ms=3000):
+        t = getattr(self, thread_attr, None)
+        if t:
+            try:
+                if t.isRunning():
+                    t.quit()
+                    if not t.wait(timeout_ms):
+                        t.terminate()
+                        t.wait(timeout_ms)
+            except Exception:
+                pass
+        setattr(self, thread_attr, None)
+        if worker_attr:
+            setattr(self, worker_attr, None)
+
+    def _stop_all_background_threads(self, timeout_ms=3000):
+        self._stop_thread("thread", "worker", timeout_ms)
+        self._stop_thread("save_thread", "save_worker", timeout_ms)
+        self._stop_thread("batch_save_thread", "batch_save_worker", timeout_ms)
+        self._stop_thread("path_scan_thread", "path_scan_worker", timeout_ms)
 
     def applyRememberedSettingsToUI(self):
         if not self.root:
@@ -985,18 +1052,26 @@ class Backend(QObject):
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
 
-    @pyqtSlot(int)
+    @pyqtSlot(int, result=int)
     def addFormatRow(self, format_index):
         if format_index < 0 or format_index >= len(self.format_model):
-            return
+            return -1
         columns = self.format_model[format_index]["columns"]
-        columns.append({
+        new_row = {
             "col": self._next_column_label(columns),
             "type": "data",
             "value": "",
             "width": 14,
-        })
-        self.formatModelChanged.emit()
+        }
+        columns.append(new_row)
+        self._sort_format_columns(columns)
+        new_index = -1
+        for i, candidate in enumerate(columns):
+            if candidate is new_row:
+                new_index = i
+                break
+        QTimer.singleShot(0, self.formatModelChanged.emit)
+        return new_index
 
     @pyqtSlot(int, int)
     def deleteFormatRow(self, format_index, row_index):
@@ -1008,20 +1083,24 @@ class Backend(QObject):
         columns.pop(row_index)
         self.formatModelChanged.emit()
 
-    @pyqtSlot(int, int, str, 'QVariant')
+    @pyqtSlot(int, int, str, 'QVariant', result=int)
     def updateFormatRow(self, format_index, row_index, field, value):
         if format_index < 0 or format_index >= len(self.format_model):
-            return
+            return -1
         columns = self.format_model[format_index]["columns"]
         if row_index < 0 or row_index >= len(columns):
-            return
+            return -1
         row = columns[row_index]
         if field == "col":
-            normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())
-            row["col"] = normalized[:3] if normalized else "A"
+            normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())[:3]
+            if normalized:
+                row["col"] = normalized
+                self._sort_format_columns(columns)
         elif field == "type":
             type_value = str(value)
             row["type"] = type_value if type_value in ("data", "formula", "empty") else "data"
+            if row["type"] == "empty":
+                row["value"] = ""
         elif field == "value":
             row["value"] = str(value)
         elif field == "width":
@@ -1030,7 +1109,15 @@ class Backend(QObject):
             except Exception:
                 width_value = 14
             row["width"] = max(1, min(200, width_value))
-        self.formatModelChanged.emit()
+        updated_index = -1
+        for i, candidate in enumerate(columns):
+            if candidate is row:
+                updated_index = i
+                break
+        if updated_index < 0:
+            updated_index = row_index
+        QTimer.singleShot(0, self.formatModelChanged.emit)
+        return updated_index
 
     @pyqtSlot()
     def saveFormatModel(self):
@@ -1127,11 +1214,47 @@ class Backend(QObject):
 
     @pyqtSlot('QVariantList')
     def setDroppedPaths(self, paths):
-        xml_paths = collect_xml_files_from_paths(paths)
-        if not xml_paths:
-            QMessageBox.warning(None, "Invalid Selection", "No XML files were found in the dropped item(s).")
+        self.cancel_requested = False
+        normalized_paths = [normalize_path(p) for p in paths if normalize_path(p)]
+        if not normalized_paths:
+            QMessageBox.warning(None, "Invalid Selection", "No valid dropped paths were found.")
             return
-        self.applySelectedPaths(xml_paths)
+        if self.path_scan_thread and self.path_scan_thread.isRunning():
+            QMessageBox.information(None, "Scanning", "Please wait for the current folder scan to finish.")
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.path_scan_thread = QThread()
+        self.path_scan_worker = PathDiscoveryWorker(normalized_paths)
+        self.path_scan_worker.moveToThread(self.path_scan_thread)
+        self.path_scan_thread.started.connect(self.path_scan_worker.process)
+        self.path_scan_worker.finished.connect(self.handleDroppedPathScanFinished)
+        self.path_scan_worker.error.connect(self.handleDroppedPathScanError)
+        self.path_scan_worker.finished.connect(self.path_scan_thread.quit)
+        self.path_scan_worker.error.connect(self.path_scan_thread.quit)
+        self.path_scan_thread.finished.connect(self.cleanupDroppedPathScan)
+        self.path_scan_thread.start()
+
+    @pyqtSlot(object)
+    def handleDroppedPathScanFinished(self, xml_paths):
+        if self.cancel_requested:
+            return
+        if xml_paths:
+            self.applySelectedPaths(xml_paths)
+            return
+        QMessageBox.warning(None, "Invalid Selection", "No XML files were found in the dropped item(s).")
+
+    @pyqtSlot(str)
+    def handleDroppedPathScanError(self, msg):
+        if msg == "Operation cancelled by user.":
+            return
+        QMessageBox.critical(None, "Error", msg)
+
+    def cleanupDroppedPathScan(self):
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        self.path_scan_thread = None
+        self.path_scan_worker = None
 
 
     @pyqtSlot()
@@ -1142,6 +1265,7 @@ class Backend(QObject):
     def confirmAndConvertBatch(self):
         if not self.xml_type or not self.selected_files:
             return
+        self.cancel_requested = False
         self.is_batch = True
         self.selected_file = None
         self.batch_results = []
@@ -1242,6 +1366,7 @@ class Backend(QObject):
 
     @pyqtSlot()
     def confirmAndConvert(self):
+        self.cancel_requested = False
                                                                                         
         if self.root:
             raw_files = self.root.property("selectedFiles")
@@ -1360,6 +1485,16 @@ class Backend(QObject):
 
     @pyqtSlot()
     def convertAnotherFile(self):
+        self.cancel_requested = True
+        if self.worker:
+            self.worker.request_cancel()
+        if self.save_worker:
+            self.save_worker.request_cancel()
+        if self.batch_save_worker:
+            self.batch_save_worker.request_cancel()
+        if self.path_scan_worker:
+            self.path_scan_worker.request_cancel()
+        self._stop_all_background_threads()
         self.resetProperties()
 
     @pyqtSlot(str)
@@ -1385,6 +1520,17 @@ class Backend(QObject):
             self.root.setProperty("progress",value)
 
     def handleError(self,msg):
+        if msg == "Operation cancelled by user.":
+            if self.thread:
+                self.thread.quit()
+                self.thread.wait()
+                self.thread = None
+            if self.root:
+                if self.is_batch:
+                    self.root.setProperty("processState", "batchReview")
+                else:
+                    self.root.setProperty("processState", "idle")
+            return
         if self.is_batch and self.root and self.root.property("processState") == "converting":
             QMessageBox.warning(None, "Batch Item Failed", msg)
             if self.current_batch_index < len(self.batch_file_statuses):
@@ -1412,6 +1558,14 @@ class Backend(QObject):
 
     @pyqtSlot(object, str, str)
     def collectBatchResult(self, df, xml_type, xml_file):
+        if self.cancel_requested:
+            if self.thread:
+                self.thread.quit()
+                self.thread.wait()
+                self.thread = None
+            if self.root:
+                self.root.setProperty("processState", "batchReview")
+            return
         default_output_path = build_default_batch_output_path(xml_file)
         default_dir = self.last_batch_dir if self.last_batch_dir and os.path.isdir(self.last_batch_dir) else os.path.dirname(default_output_path)
         self.batch_results.append({
@@ -1449,6 +1603,45 @@ class Backend(QObject):
     @pyqtSlot(str, result=str)
     def validateOutputDirectory(self, directory):
         return get_invalid_output_directory_message(directory)
+
+    @pyqtSlot('QVariantList', result='QVariantList')
+    def estimateBatchOutputConflicts(self, outputs):
+        entries = []
+        if isinstance(outputs, list):
+            entries = outputs
+        elif hasattr(outputs, "toVariant"):
+            try:
+                variant = outputs.toVariant()
+                entries = variant if isinstance(variant, list) else []
+            except Exception:
+                entries = []
+
+        by_path = {}
+        for i, item in enumerate(entries):
+            if not isinstance(item, dict):
+                continue
+            file_name = ensure_xlsx_extension(str(item.get("fileName", "")))
+            save_dir = str(item.get("saveDir", ""))
+            if not file_name or not save_dir:
+                continue
+            full_path = normalize_path(os.path.join(save_dir, file_name))
+            if not full_path:
+                continue
+            key = os.path.normcase(full_path)
+            by_path.setdefault(key, []).append((i, item, full_path))
+
+        conflicts = []
+        for _, group in by_path.items():
+            if len(group) <= 1:
+                continue
+            for idx, item, full_path in group:
+                conflicts.append({
+                    "index": idx,
+                    "sourceFile": str(item.get("sourceFile", f"Item {idx + 1}")),
+                    "path": full_path,
+                    "reason": "Duplicate output path in batch list."
+                })
+        return conflicts
 
     @pyqtSlot(int, str)
     def updateBatchOutputFileName(self, index, file_name):
@@ -1504,6 +1697,7 @@ class Backend(QObject):
     def saveAllBatchOutputs(self):
         if not self.batch_results or not self.batch_outputs:
             return
+        self.cancel_requested = False
         dir_issues = []
         for i, output in enumerate(self.batch_outputs):
             reason = get_invalid_output_directory_message(output.get("saveDir", ""))
@@ -1536,6 +1730,22 @@ class Backend(QObject):
                 + suffix
             )
             return
+        conflicts = self.estimateBatchOutputConflicts(self.batch_outputs)
+        if conflicts:
+            lines = []
+            for i, conflict in enumerate(conflicts[:8]):
+                lines.append(
+                    f"{i + 1}. {conflict.get('sourceFile', 'Item')} -> {conflict.get('path', '')}"
+                )
+            suffix = "" if len(conflicts) <= 8 else f"\n...and {len(conflicts) - 8} more conflict(s)"
+            QMessageBox.warning(
+                None,
+                "Conflicting Output Paths",
+                "Please resolve duplicate output paths before confirming:\n\n"
+                + "\n".join(lines)
+                + suffix
+            )
+            return
         target_paths = [
             os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))
             for output in self.batch_outputs
@@ -1555,6 +1765,15 @@ class Backend(QObject):
         self.batch_save_thread.start()
 
     def handleBatchSaveError(self, msg):
+        if msg == "Operation cancelled by user.":
+            if self.root:
+                self.root.setProperty("processState", "batchReview")
+            if self.batch_save_thread:
+                self.batch_save_thread.quit()
+                self.batch_save_thread.wait()
+            self.batch_save_thread = None
+            self.batch_save_worker = None
+            return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
             self.root.setProperty("processState", "batchReview")
@@ -1566,6 +1785,15 @@ class Backend(QObject):
 
     @pyqtSlot(object)
     def handleBatchSaveFinished(self, saved_outputs):
+        if self.cancel_requested:
+            if self.root:
+                self.root.setProperty("processState", "batchReview")
+            if self.batch_save_thread:
+                self.batch_save_thread.quit()
+                self.batch_save_thread.wait()
+            self.batch_save_thread = None
+            self.batch_save_worker = None
+            return
         self.batch_outputs = saved_outputs
         self.refreshBatchOutputsProperty()
         self.progressUpdated.emit(100)
@@ -1581,13 +1809,15 @@ class Backend(QObject):
     @pyqtSlot(object,str,str)
     def saveFile(self, df, xml_type, xml_file):
         df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
-        dialog = QFileDialog()
-        dialog.setWindowTitle("Save Excel File")
-        dialog.setNameFilter("Excel Files (*.xlsx)")
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        if self.last_save_dir and os.path.isdir(self.last_save_dir):
-            dialog.setDirectory(self.last_save_dir)
-        save_path = dialog.selectedFiles()[0] if dialog.exec() else None
+        start_dir = self.last_save_dir if self.last_save_dir and os.path.isdir(self.last_save_dir) else os.path.dirname(xml_file)
+        default_name = os.path.splitext(os.path.basename(xml_file))[0] + ".xlsx"
+        default_path = os.path.join(start_dir, default_name)
+        save_path, _ = QFileDialog.getSaveFileName(
+            None,
+            "Save Excel File",
+            default_path,
+            "Excel Files (*.xlsx)"
+        )
         if save_path and not save_path.lower().endswith(".xlsx"): save_path += ".xlsx"
         if not save_path:
             self.thread.quit()
@@ -1614,6 +1844,14 @@ class Backend(QObject):
         self.thread.wait()
 
     def handleSaveError(self, msg):
+        if msg == "Operation cancelled by user.":
+            if self.root:
+                self.root.setProperty("processState", "idle")
+            if self.save_thread:
+                self.save_thread.quit()
+                self.save_thread.wait()
+                self.save_thread = None
+            return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
             self.root.setProperty("processState", "idle")
@@ -1622,6 +1860,14 @@ class Backend(QObject):
 
     @pyqtSlot(str, str)
     def handleSaved(self, save_path, xml_file):
+        if self.cancel_requested:
+            if self.root:
+                self.root.setProperty("processState", "idle")
+            if self.save_thread:
+                self.save_thread.quit()
+                self.save_thread.wait()
+                self.save_thread = None
+            return
         self.progressUpdated.emit(100)
         QMessageBox.information(None, "Done", f"Processed Excel saved:\n{save_path}")
         self.current_batch_index += 1
@@ -1635,7 +1881,33 @@ class Backend(QObject):
         self.save_thread.quit()
         self.save_thread.wait()
 
+    @pyqtSlot()
+    def cancelCurrentOperation(self):
+        self.cancel_requested = True
+        if self.worker:
+            self.worker.request_cancel()
+        if self.save_worker:
+            self.save_worker.request_cancel()
+        if self.batch_save_worker:
+            self.batch_save_worker.request_cancel()
+        if self.path_scan_worker:
+            self.path_scan_worker.request_cancel()
+        self._stop_all_background_threads()
+
+        if self.is_batch:
+            for i, status in enumerate(self.batch_file_statuses):
+                if status in ("Queued", "Processing"):
+                    self.batch_file_statuses[i] = "Cancelled"
+            self.refreshBatchFileStatusesProperty()
+            if self.root:
+                self.root.setProperty("processState", "batchReview")
+            return
+
+        if self.root:
+            self.root.setProperty("processState", "idle")
+
     def resetProperties(self):
+        self._stop_all_background_threads()
         if self.root:
             self.root.setProperty("processState","idle")
             self.root.setProperty("selectedFile","")
