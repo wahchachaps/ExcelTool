@@ -594,6 +594,7 @@ class Backend(QObject):
     formatDesignerStatusChanged = pyqtSignal()
     xmlTypeOptionsChanged = pyqtSignal()
     formatSavePathChanged = pyqtSignal()
+    xmlPreviewChanged = pyqtSignal()
 
     def __init__(self, engine):
         super().__init__()
@@ -624,6 +625,10 @@ class Backend(QObject):
         self.format_model = self._load_or_default_formats()
         self.xml_type_options = []
         self.format_designer_status = ""
+        self.xml_preview_headers = []
+        self.xml_preview_rows = []
+        self.xml_preview_status = ""
+        self.preview_selected_file = ""
         self._format_edit_snapshot = None
         self._format_edit_active = False
         self.settings = QSettings("CubeFlow", "CubeFlow")
@@ -650,9 +655,38 @@ class Backend(QObject):
     def formatSavePath(self):
         return self.format_save_path
 
+    @pyqtProperty('QVariantList', notify=xmlPreviewChanged)
+    def xmlPreviewHeaders(self):
+        return self.xml_preview_headers
+
+    @pyqtProperty('QVariantList', notify=xmlPreviewChanged)
+    def xmlPreviewRows(self):
+        return self.xml_preview_rows
+
+    @pyqtProperty(str, notify=xmlPreviewChanged)
+    def xmlPreviewStatus(self):
+        return self.xml_preview_status
+
     def _set_format_designer_status(self, status):
         self.format_designer_status = status
         self.formatDesignerStatusChanged.emit()
+
+    def _set_xml_preview(self, headers=None, rows=None, status=""):
+        self.xml_preview_headers = headers if isinstance(headers, list) else []
+        self.xml_preview_rows = rows if isinstance(rows, list) else []
+        self.xml_preview_status = str(status or "")
+        self.xmlPreviewChanged.emit()
+
+    def _preview_source_file(self):
+        if self.preview_selected_file and os.path.exists(self.preview_selected_file):
+            return self.preview_selected_file
+        if self.selected_file and os.path.exists(self.selected_file):
+            return self.selected_file
+        if self.selected_files:
+            first = self.selected_files[0]
+            if first and os.path.exists(first):
+                return first
+        return ""
 
     def _default_columns(self, formula):
         return [
@@ -1005,6 +1039,50 @@ class Backend(QObject):
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
 
+    @pyqtSlot(int, result=int)
+    def duplicateFormatDefinition(self, index):
+        if index < 0 or index >= len(self.format_model):
+            return -1
+        source = self.format_model[index]
+        duplicate_name = self._unique_format_name(f"{source.get('name', 'Format')} Copy")
+        duplicate_columns = copy.deepcopy(source.get("columns", self._default_columns("=C{r}*280")))
+        self.format_model.append({
+            "name": duplicate_name,
+            "columns": duplicate_columns
+        })
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+        new_index = len(self.format_model) - 1
+        try:
+            os.makedirs(self.formats_dir, exist_ok=True)
+            file_name = self._safe_format_filename(duplicate_name)
+            target_path = os.path.join(self.formats_dir, file_name)
+            with open(target_path, "w", encoding="utf-8") as fp:
+                json.dump(self.format_model[new_index], fp, indent=2)
+            self._autosave_formats()
+            self._set_format_designer_status(f"Duplicated format and saved file: {target_path}")
+        except Exception as e:
+            self._set_format_designer_status(f"Duplicated format but failed to save file: {e}")
+        return new_index
+
+    @pyqtSlot(int)
+    def openFormatForEdit(self, index):
+        if index < 0 or index >= len(self.format_model):
+            return
+        self.beginFormatEdit(index)
+        if self.root:
+            self.root.setProperty("formatDesignerSelectedFormatIndex", index)
+            self.root.setProperty("formatDesignerSelectedRowIndex", -1)
+            self.root.setProperty("processState", "formatCreate")
+
+    @pyqtSlot(int)
+    def duplicateFormatAndOpen(self, index):
+        new_index = self.duplicateFormatDefinition(index)
+        if new_index < 0:
+            return
+        self.openFormatForEdit(new_index)
+        return
+
     @pyqtSlot(result=int)
     def createFormatDraft(self):
                                                                                  
@@ -1144,6 +1222,88 @@ class Backend(QObject):
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return updated_index
 
+    @pyqtSlot(int, result=bool)
+    def loadXmlPreview(self, max_rows=10):
+        source_file = self._preview_source_file()
+        if not source_file:
+            self._set_xml_preview([], [], "Select an XML file first.")
+            return False
+        rows_limit = max(1, min(30, int(max_rows) if max_rows else 10))
+        try:
+            df_xml = pd.read_xml(
+                source_file,
+                xpath=".//ns:Items",
+                namespaces={"ns": "http://tempuri.org/ArrayFieldDataSet.xsd"}
+            )
+            if df_xml is None or df_xml.empty:
+                self._set_xml_preview([], [], f"No rows found in {os.path.basename(source_file)}.")
+                return False
+            df_filtered = df_xml[~df_xml.iloc[:, 0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            if df_filtered.empty:
+                self._set_xml_preview([], [], f"No valid rows found in {os.path.basename(source_file)}.")
+                return False
+            df_data = df_filtered.iloc[:, 1:] if df_filtered.shape[1] > 1 else df_filtered
+            max_cols = min(12, df_data.shape[1])
+            if max_cols <= 0:
+                self._set_xml_preview([], [], f"No previewable columns in {os.path.basename(source_file)}.")
+                return False
+            headers = []
+            for i in range(max_cols):
+                headers.append({
+                    "index": i,
+                    "name": str(df_data.columns[i])
+                })
+            rows = []
+            for r in range(min(rows_limit, len(df_data))):
+                row_vals = []
+                for c in range(max_cols):
+                    val = df_data.iloc[r, c]
+                    row_vals.append("" if pd.isna(val) else str(val))
+                rows.append(row_vals)
+            self._set_xml_preview(headers, rows, f"Previewing {os.path.basename(source_file)}")
+            return True
+        except Exception as e:
+            self._set_xml_preview([], [], f"Preview failed: {e}")
+            return False
+
+    @pyqtSlot()
+    def selectPreviewXmlFile(self):
+        if self.preview_selected_file and os.path.exists(self.preview_selected_file):
+            self.loadXmlPreview(10)
+            return
+        self.selectAnotherPreviewXmlFile()
+
+    @pyqtSlot()
+    def selectAnotherPreviewXmlFile(self):
+        start_dir = self.last_open_dir if self.last_open_dir and os.path.isdir(self.last_open_dir) else ""
+        file_path, _ = QFileDialog.getOpenFileName(None, "Select XML Preview File", start_dir, "XML Files (*.xml)")
+        if not file_path:
+            return
+        self.rememberOpenDirectory(file_path)
+        self.preview_selected_file = file_path
+        self.loadXmlPreview(10)
+
+    @pyqtSlot(int, int, int, result=int)
+    def setFormatRowFromPreview(self, format_index, row_index, column_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return -1
+        columns = self.format_model[format_index]["columns"]
+        if row_index < 0 or row_index >= len(columns):
+            return -1
+        safe_col_index = max(0, int(column_index))
+        row = columns[row_index]
+        row["type"] = "data"
+        row["value"] = str(safe_col_index)
+        updated_index = -1
+        for i, candidate in enumerate(columns):
+            if candidate is row:
+                updated_index = i
+                break
+        if updated_index < 0:
+            updated_index = row_index
+        QTimer.singleShot(0, self.formatModelChanged.emit)
+        return updated_index
+
     @pyqtSlot()
     def saveFormatModel(self):
         try:
@@ -1202,6 +1362,8 @@ class Backend(QObject):
         self.current_batch_index = 0
         self.xml_type = ""
         self.batch_file_statuses = ["Queued"] * len(self.selected_files) if is_batch_selection else []
+        self.preview_selected_file = ""
+        self._set_xml_preview([], [], "")
 
         if self.root:
                                                                                        
@@ -1526,6 +1688,8 @@ class Backend(QObject):
         self.batch_outputs = []
         self.is_batch = False
         self.current_batch_index = 0
+        self.preview_selected_file = ""
+        self._set_xml_preview([], [], "")
         if self.root:
             self.root.setProperty("isBatch", False)
             self.root.setProperty("selectedFiles", [])
@@ -1884,6 +2048,8 @@ class Backend(QObject):
 
     def resetProperties(self):
         self._stop_all_background_threads()
+        self.preview_selected_file = ""
+        self._set_xml_preview([], [], "")
         if self.root:
             self.root.setProperty("processState","idle")
             self.root.setProperty("selectedFile","")

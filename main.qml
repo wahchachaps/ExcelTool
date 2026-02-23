@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
@@ -77,6 +77,58 @@ Window {
     property int batchRowHighlightIndex: -1
     property string confirmAction: ""
     property string confirmMessage: ""
+    property bool previewSelectMode: false
+    property int previewSelectFormatIndex: -1
+    property int previewSelectRowIndex: -1
+    property var backendSafe: (backend !== null && backend !== undefined) ? backend : backendNull
+
+    QtObject {
+        id: backendNull
+        property var formatModel: []
+        property var xmlTypeOptions: []
+        property string formatDesignerStatus: ""
+        property var xmlPreviewHeaders: []
+        property var xmlPreviewRows: []
+        property string xmlPreviewStatus: ""
+
+        function validateOutputDirectory(_path) { return "" }
+        function estimateBatchOutputConflicts(_outputs) { return [] }
+        function getFileSize(_path) { return "" }
+
+        function setFormatRowFromPreview(_a, _b, _c) { return -1 }
+        function updateFormatRow(_a, _b, _c, _d) { return -1 }
+        function createFormatDraft() { return -1 }
+        function addFormatRow(_i) { return -1 }
+
+        function setSelectionType(_t) {}
+        function selectFile() {}
+        function setDroppedPaths(_p) {}
+        function openFormatDesigner() {}
+        function removeSelectedFile(_i) {}
+        function confirmAndConvert() {}
+        function openFormatForEdit(_i) {}
+        function duplicateFormatAndOpen(_i) {}
+        function deleteFormatDefinition(_i) {}
+        function importFormatModelFromFile() {}
+        function closeFormatDesigner() {}
+        function renameFormatDefinition(_i, _n) {}
+        function selectPreviewXmlFile() {}
+        function selectAnotherPreviewXmlFile() {}
+        function deleteFormatRow(_a, _b) {}
+        function saveFormatByName(_i) {}
+        function commitFormatEdit() {}
+        function cancelFormatEdit() {}
+        function confirmDiscardFormatEdit() { return false }
+        function applyBatchOutputDirectoryToAll(_p) {}
+        function browseBatchOutputDirectoryForAll() {}
+        function updateBatchOutputFileName(_i, _n) {}
+        function updateBatchOutputDirectory(_i, _p) {}
+        function browseBatchOutputDirectory(_i) {}
+        function saveAllBatchOutputs() {}
+        function convertAnotherFile() {}
+        function cancelCurrentOperation() {}
+        function selectDifferentFile() {}
+    }
 
     onFormatDesignerSelectedFormatIndexChanged: {
         formatRowsSavedContentY = 0
@@ -155,7 +207,7 @@ Window {
     }
 
     function validateBatchSaveDir(path) {
-        return backend.validateOutputDirectory(String(path || ""))
+        return backendSafe.validateOutputDirectory(String(path || ""))
     }
 
     function restoreListContentY(listView, targetY) {
@@ -257,6 +309,77 @@ Window {
         }
     }
 
+    function applyPreviewColumnToActiveRow(columnIndex) {
+        var targetRow = formatDesignerSelectedRowIndex >= 0
+                      ? formatDesignerSelectedRowIndex
+                      : formatRowsHighlightIndex
+        if (formatDesignerSelectedFormatIndex < 0) {
+            return
+        }
+        if (targetRow < 0
+                && backendSafe.formatModel
+                && formatDesignerSelectedFormatIndex < backendSafe.formatModel.length
+                && backendSafe.formatModel[formatDesignerSelectedFormatIndex].columns
+                && backendSafe.formatModel[formatDesignerSelectedFormatIndex].columns.length > 0) {
+            targetRow = 0
+        }
+        if (targetRow < 0) {
+            return
+        }
+        var updatedIndex = backendSafe.setFormatRowFromPreview(formatDesignerSelectedFormatIndex, targetRow, columnIndex)
+        if (updatedIndex >= 0) {
+            markAndJumpFormatRow(updatedIndex)
+            formatDesignerSelectedRowIndex = updatedIndex
+            formatEditorFocusType = "value"
+        }
+    }
+
+    function openPreviewDialogReadOnly() {
+        previewSelectMode = false
+        previewSelectFormatIndex = -1
+        previewSelectRowIndex = -1
+        if (backendSafe.xmlPreviewHeaders && backendSafe.xmlPreviewHeaders.length > 0) {
+            xmlPreviewDialog.open()
+        }
+    }
+
+    function openPreviewDialogForIndex(formatIndex, rowIndex) {
+        previewSelectMode = true
+        previewSelectFormatIndex = formatIndex
+        previewSelectRowIndex = rowIndex
+        if (!backendSafe.xmlPreviewHeaders || backendSafe.xmlPreviewHeaders.length === 0) {
+            backendSafe.selectPreviewXmlFile()
+        }
+        if (backendSafe.xmlPreviewHeaders && backendSafe.xmlPreviewHeaders.length > 0) {
+            xmlPreviewDialog.open()
+        }
+    }
+
+    function pickSourceIndexFromPreview(columnIndex) {
+        if (!previewSelectMode || previewSelectFormatIndex < 0 || previewSelectRowIndex < 0) {
+            return
+        }
+        prepareFormatRowsModelChange(false)
+        var updatedIndex = backendSafe.updateFormatRow(previewSelectFormatIndex, previewSelectRowIndex, "value", String(columnIndex))
+        markAndJumpFormatRow(updatedIndex)
+        formatDesignerSelectedRowIndex = updatedIndex
+        formatEditorFocusType = "value"
+        previewSelectMode = false
+        previewSelectFormatIndex = -1
+        previewSelectRowIndex = -1
+        xmlPreviewDialog.close()
+    }
+
+    function scrollPreviewHoriz(stepDir) {
+        if (!xmlPreviewDialogFlick) {
+            return
+        }
+        var step = 36 * scaleFactor
+        var maxX = Math.max(0, xmlPreviewDialogFlick.contentWidth - xmlPreviewDialogFlick.width)
+        var nextX = xmlPreviewDialogFlick.contentX + (stepDir > 0 ? step : -step)
+        xmlPreviewDialogFlick.contentX = Math.max(0, Math.min(maxX, nextX))
+    }
+
     function openConfirmation(actionId, messageText) {
         confirmAction = String(actionId || "")
         confirmMessage = String(messageText || "Are you sure?")
@@ -267,15 +390,15 @@ Window {
         var actionId = confirmAction
         confirmDialog.close()
         if (actionId === "cancelProcess") {
-            backend.cancelCurrentOperation()
+            backendSafe.cancelCurrentOperation()
         } else if (actionId === "headerBack") {
             if (processState === "selecting") {
-                backend.selectDifferentFile()
+                backendSafe.selectDifferentFile()
             } else {
-                backend.convertAnotherFile()
+                backendSafe.convertAnotherFile()
             }
         } else if (actionId === "batchReviewBack") {
-            backend.convertAnotherFile()
+            backendSafe.convertAnotherFile()
         }
         confirmAction = ""
     }
@@ -381,14 +504,14 @@ Window {
         if (!batchOutputs || batchOutputs.length === 0) {
             return false
         }
-        return backend.estimateBatchOutputConflicts(batchOutputs).length > 0
+        return backendSafe.estimateBatchOutputConflicts(batchOutputs).length > 0
     }
 
     function batchOutputConflicts() {
         if (!batchOutputs || batchOutputs.length === 0) {
             return []
         }
-        return backend.estimateBatchOutputConflicts(batchOutputs)
+        return backendSafe.estimateBatchOutputConflicts(batchOutputs)
     }
 
     function batchOutputConflictSummary(limit) {
@@ -419,7 +542,7 @@ Window {
             return "No files selected"
         }
         return selectedFiles.map(function(f) {
-            return baseName(f) + " (" + backend.getFileSize(f) + ")"
+            return baseName(f) + " (" + backendSafe.getFileSize(f) + ")"
         }).join("\n")
     }
 
@@ -716,6 +839,206 @@ Window {
         }
     }
 
+    Popup {
+        id: xmlPreviewDialog
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        anchors.centerIn: parent
+        width: Math.min(rootWindow.width - (20 * scaleFactor), 760 * scaleFactor)
+        height: Math.min(rootWindow.height - (28 * scaleFactor), 420 * scaleFactor)
+        padding: 0
+        z: 360
+        background: Item {}
+        onClosed: {
+            previewSelectMode = false
+            previewSelectFormatIndex = -1
+            previewSelectRowIndex = -1
+        }
+        onOpened: {
+            forceActiveFocus()
+            if (xmlPreviewDialogFlick) {
+                xmlPreviewDialogFlick.forceActiveFocus()
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: themePanel
+            border.color: themeLayer2
+            border.width: 1
+            radius: 6
+            clip: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 8 * scaleFactor
+                spacing: 6 * scaleFactor
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6 * scaleFactor
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: previewSelectMode ? "Select Source Index" : "XML Preview"
+                        color: themeText
+                        font.family: appFontFamily
+                        font.pixelSize: 12 * scaleFactor
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+
+                    PixelButton {
+                        sliceLeft: 4
+                        sliceRight: 4
+                        sliceTop: 4
+                        sliceBottom: 4
+                        Layout.preferredWidth: 72 * scaleFactor
+                        Layout.preferredHeight: 26 * scaleFactor
+                        text: "Close"
+                        textPixelSize: 10 * scaleFactor
+                        fallbackNormal: themePanel
+                        fallbackHover: themeLayer2
+                        fallbackPressed: themeLayer1
+                        borderColor: themeLayer3
+                        onClicked: xmlPreviewDialog.close()
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: backendSafe.xmlPreviewStatus
+                    color: themeTextSecondary
+                    font.pixelSize: 10 * scaleFactor
+                    elide: Text.ElideRight
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: themeInset
+                    border.color: themeLayer2
+                    border.width: 1
+                    radius: 5
+                    clip: true
+
+                    Flickable {
+                        id: xmlPreviewDialogFlick
+                        focus: true
+                        anchors.fill: parent
+                        anchors.margins: 6 * scaleFactor
+                        clip: true
+                        contentWidth: xmlPreviewDialogTable.implicitWidth
+                        contentHeight: xmlPreviewDialogTable.implicitHeight
+
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                        WheelHandler {
+                            onWheel: function(event) {
+                                var delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x
+                                var step = 36 * scaleFactor
+                                var maxX = Math.max(0, xmlPreviewDialogFlick.contentWidth - xmlPreviewDialogFlick.width)
+                                var nextX = xmlPreviewDialogFlick.contentX + (delta < 0 ? step : -step)
+                                xmlPreviewDialogFlick.contentX = Math.max(0, Math.min(maxX, nextX))
+                                event.accepted = true
+                            }
+                        }
+
+                        Column {
+                            id: xmlPreviewDialogTable
+                            spacing: 4 * scaleFactor
+
+                            Row {
+                                spacing: 4 * scaleFactor
+
+                                Repeater {
+                                    model: backendSafe.xmlPreviewHeaders
+
+                                    Rectangle {
+                                        width: 90 * scaleFactor
+                                        height: 24 * scaleFactor
+                                        color: themePanel
+                                        border.color: themeLayer3
+                                        border.width: 1
+                                        radius: 3
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "[" + modelData.index + "]"
+                                            color: themeText
+                                            font.pixelSize: 9 * scaleFactor
+                                            font.bold: true
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: previewSelectMode
+                                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: rootWindow.pickSourceIndexFromPreview(modelData.index)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: backendSafe.xmlPreviewRows
+
+                                Row {
+                                    spacing: 4 * scaleFactor
+
+                                    Repeater {
+                                        model: modelData
+
+                                        Rectangle {
+                                            width: 90 * scaleFactor
+                                            height: 22 * scaleFactor
+                                            color: themePanel
+                                            border.color: themeLayer2
+                                            border.width: 1
+                                            radius: 2
+
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                anchors.left: parent.left
+                                                anchors.leftMargin: 4 * scaleFactor
+                                                anchors.right: parent.right
+                                                anchors.rightMargin: 4 * scaleFactor
+                                                text: String(modelData)
+                                                color: themeText
+                                                font.pixelSize: 9 * scaleFactor
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Shortcut {
+        sequence: "Left"
+        context: Qt.ApplicationShortcut
+        enabled: xmlPreviewDialog.visible
+        onActivated: {
+            rootWindow.scrollPreviewHoriz(-1)
+        }
+    }
+
+    Shortcut {
+        sequence: "Right"
+        context: Qt.ApplicationShortcut
+        enabled: xmlPreviewDialog.visible
+        onActivated: {
+            rootWindow.scrollPreviewHoriz(1)
+        }
+    }
+
 
     ColumnLayout {
         anchors.fill: parent
@@ -787,7 +1110,7 @@ Window {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    backend.selectFile()
+                    backendSafe.selectFile()
                     selectionType = ""
                     typeComboBox.currentIndex = -1
                 }
@@ -819,7 +1142,7 @@ Window {
                         var path = decodeURIComponent(raw.replace("file:///", ""))
                         droppedPaths.push(path)
                     }
-                    backend.setDroppedPaths(droppedPaths)
+                    backendSafe.setDroppedPaths(droppedPaths)
                     selectionType = ""
                     typeComboBox.currentIndex = -1
                 }
@@ -907,7 +1230,7 @@ Window {
             fallbackPressed: themeLayer1
             fallbackDisabled: "#9ca3af"
             borderColor: themeLayer3
-            onClicked: backend.openFormatDesigner()
+            onClicked: backendSafe.openFormatDesigner()
         }
 
 
@@ -980,7 +1303,7 @@ Window {
                                         Text {
                                             id: fileNameText
                                             Layout.fillWidth: true
-                                            text: baseName(selectedFiles[index]) + " (" + backend.getFileSize(selectedFiles[index]) + ")"
+                                            text: baseName(selectedFiles[index]) + " (" + backendSafe.getFileSize(selectedFiles[index]) + ")"
                                             font.pixelSize: 12 * scaleFactor
                                             color: themeText
                                             elide: Text.ElideMiddle
@@ -1015,7 +1338,7 @@ Window {
                                             MouseArea {
                                                 anchors.fill: parent
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: backend.removeSelectedFile(index)
+                                                onClicked: backendSafe.removeSelectedFile(index)
                                             }
                                         }
                                     }
@@ -1058,7 +1381,7 @@ Window {
                 Layout.preferredHeight: primaryControlHeight
                 textPixelSize: primaryControlFontSize
                 popupTextPixelSize: 11 * scaleFactor
-                model: backend.xmlTypeOptions
+                model: backendSafe.xmlTypeOptions
                 currentIndex: -1
                 displayText: currentIndex === -1 ? "Select XML type" : currentText
                 fallbackNormal: themeInset
@@ -1071,7 +1394,7 @@ Window {
                 fallbackPopup: themePanel
                 onCurrentTextChanged: {
                     if (currentIndex >= 0 && currentText !== selectionType) {
-                        backend.setSelectionType(currentText)
+                        backendSafe.setSelectionType(currentText)
                     }
                 }
             }
@@ -1094,9 +1417,9 @@ Window {
                 borderColor: themeLayer3
                 onClicked: {
                     if (typeComboBox.currentIndex >= 0) {
-                        backend.setSelectionType(typeComboBox.currentText)
+                        backendSafe.setSelectionType(typeComboBox.currentText)
                     }
-                    backend.confirmAndConvert()
+                    backendSafe.confirmAndConvert()
                 }
             }
 
@@ -1114,7 +1437,7 @@ Window {
                 fallbackHover: themeLayer2
                 fallbackPressed: themeLayer1
                 borderColor: themeLayer3
-                onClicked: backend.selectFile()
+                onClicked: backendSafe.selectFile()
             }
         }
 
@@ -1157,7 +1480,7 @@ Window {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        var newIndex = backend.createFormatDraft()
+                        var newIndex = backendSafe.createFormatDraft()
                         rootWindow.formatDesignerSelectedFormatIndex = Math.max(0, newIndex)
                         rootWindow.formatDesignerSelectedRowIndex = -1
                         processState = "formatCreate"
@@ -1175,10 +1498,12 @@ Window {
                 clip: true
 
                 ListView {
+                    id: formatDesignerListView
+                    property var windowRef: rootWindow
                     anchors.fill: parent
                     anchors.margins: 8 * scaleFactor
                     spacing: 6 * scaleFactor
-                    model: backend.formatModel
+                    model: backendSafe.formatModel
                     clip: true
 
                     delegate: Rectangle {
@@ -1217,12 +1542,23 @@ Window {
                                 fallbackHover: themeLayer2
                                 fallbackPressed: themeLayer1
                                 borderColor: themeLayer3
-                                onClicked: {
-                                    rootWindow.formatDesignerSelectedFormatIndex = index
-                                    rootWindow.formatDesignerSelectedRowIndex = -1
-                                    backend.beginFormatEdit(index)
-                                    processState = "formatCreate"
-                                }
+                                onClicked: backendSafe.openFormatForEdit(index)
+                            }
+
+                            PixelButton {
+                                sliceLeft: 4
+                                sliceRight: 4
+                                sliceTop: 4
+                                sliceBottom: 4
+                                Layout.preferredWidth: 74 * scaleFactor
+                                Layout.preferredHeight: 30 * scaleFactor
+                                text: "Duplicate"
+                                textPixelSize: 9 * scaleFactor
+                                fallbackNormal: themeLayer3
+                                fallbackHover: themeLayer2
+                                fallbackPressed: themeLayer1
+                                borderColor: themeLayer3
+                                onClicked: backendSafe.duplicateFormatAndOpen(index)
                             }
 
                             PixelButton {
@@ -1235,14 +1571,14 @@ Window {
                                 Layout.preferredHeight: 30 * scaleFactor
                                 text: "Delete"
                                 textPixelSize: 10 * scaleFactor
-                                enabled: backend.formatModel.length > 1
+                                enabled: backendSafe.formatModel.length > 1
                                 fallbackNormal: "#dc2626"
                                 fallbackHover: "#b91c1c"
                                 fallbackPressed: "#991b1b"
                                 fallbackDisabled: "#9ca3af"
                                 borderColor: "#dc2626"
                                 onClicked: {
-                                    backend.deleteFormatDefinition(index)
+                                    backendSafe.deleteFormatDefinition(index)
                                 }
                             }
                         }
@@ -1252,11 +1588,11 @@ Window {
 
             Text {
                 Layout.fillWidth: true
-                text: backend.formatDesignerStatus
-                color: backend.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : themeLayer3
+                text: backendSafe.formatDesignerStatus
+                color: backendSafe.formatDesignerStatus.indexOf("Failed") === 0 ? "#dc2626" : themeLayer3
                 font.pixelSize: 10 * scaleFactor
                 wrapMode: Text.Wrap
-                visible: backend.formatDesignerStatus.length > 0
+                visible: backendSafe.formatDesignerStatus.length > 0
             }
 
             PixelButton {
@@ -1272,7 +1608,7 @@ Window {
                 fallbackHover: themeLayer2
                 fallbackPressed: themeLayer1
                 borderColor: themeLayer3
-                onClicked: backend.importFormatModelFromFile()
+                onClicked: backendSafe.importFormatModelFromFile()
             }
 
             PixelButton {
@@ -1289,7 +1625,7 @@ Window {
                 fallbackPressed: themeLayer1
                 textColor: themeText
                 borderColor: themeLayer3
-                onClicked: backend.closeFormatDesigner()
+                onClicked: backendSafe.closeFormatDesigner()
             }
         }
 
@@ -1298,12 +1634,12 @@ Window {
             visible: processState === "formatCreate"
             property int selectedFormatIndex: rootWindow.formatDesignerSelectedFormatIndex
             property bool selectedBuiltInFormat: (
-                backend.formatModel.length > 0
+                backendSafe.formatModel.length > 0
                 && selectedFormatIndex >= 0
-                && selectedFormatIndex < backend.formatModel.length
-                && (backend.formatModel[selectedFormatIndex].name === "Den"
-                    || backend.formatModel[selectedFormatIndex].name === "Glacier"
-                    || backend.formatModel[selectedFormatIndex].name === "Globe")
+                && selectedFormatIndex < backendSafe.formatModel.length
+                && (backendSafe.formatModel[selectedFormatIndex].name === "Den"
+                    || backendSafe.formatModel[selectedFormatIndex].name === "Glacier"
+                    || backendSafe.formatModel[selectedFormatIndex].name === "Globe")
             )
             spacing: 8 * scaleFactor
             Layout.fillWidth: true
@@ -1330,14 +1666,14 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 50 * scaleFactor
                 font.pixelSize: 16 * scaleFactor
-                text: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
-                    ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].name
+                text: (backendSafe.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backendSafe.formatModel.length)
+                    ? backendSafe.formatModel[rootWindow.formatDesignerSelectedFormatIndex].name
                     : ""
                 placeholderText: "Format name"
                 readOnly: formatCreatePanel.selectedBuiltInFormat
                 onEditingFinished: {
                     if (!formatCreatePanel.selectedBuiltInFormat) {
-                        backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, text)
+                        backendSafe.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, text)
                     }
                 }
                 Keys.onEscapePressed: function(event) {
@@ -1360,19 +1696,57 @@ Window {
                     Layout.preferredHeight: 28 * scaleFactor
                     text: "Add Column"
                     textPixelSize: 10 * scaleFactor
-                    enabled: backend.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
+                    enabled: backendSafe.formatModel.length > 0 && !formatCreatePanel.selectedBuiltInFormat
                     fallbackNormal: themeLayer3
                     fallbackHover: themeLayer2
                     fallbackPressed: themeLayer1
                     fallbackDisabled: "#9ca3af"
                     borderColor: themeLayer3
                     onClicked: {
-                        var newIndex = backend.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
+                        var newIndex = backendSafe.addFormatRow(rootWindow.formatDesignerSelectedFormatIndex)
                         if (newIndex >= 0) {
                             rootWindow.formatEditorFocusType = ""
                             rootWindow.formatDesignerSelectedRowIndex = -1
                             rootWindow.markAndJumpFormatRow(newIndex)
                         }
+                    }
+                }
+
+                PixelButton {
+                    sliceLeft: 4
+                    sliceRight: 4
+                    sliceTop: 4
+                    sliceBottom: 4
+                    Layout.preferredWidth: 90 * scaleFactor
+                    Layout.preferredHeight: 28 * scaleFactor
+                    text: "Load Preview"
+                    textPixelSize: 10 * scaleFactor
+                    fallbackNormal: themeLayer3
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    borderColor: themeLayer3
+                    onClicked: {
+                        backendSafe.selectPreviewXmlFile()
+                        rootWindow.openPreviewDialogReadOnly()
+                    }
+                }
+
+                PixelButton {
+                    sliceLeft: 4
+                    sliceRight: 4
+                    sliceTop: 4
+                    sliceBottom: 4
+                    Layout.preferredWidth: 120 * scaleFactor
+                    Layout.preferredHeight: 28 * scaleFactor
+                    text: "Select Another XML"
+                    textPixelSize: 9 * scaleFactor
+                    fallbackNormal: themePanel
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    borderColor: themeLayer3
+                    onClicked: {
+                        backendSafe.selectAnotherPreviewXmlFile()
+                        rootWindow.openPreviewDialogReadOnly()
                     }
                 }
             }
@@ -1383,6 +1757,14 @@ Window {
                 color: themeText
                 font.pixelSize: 10 * scaleFactor
                 wrapMode: Text.Wrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: backendSafe.xmlPreviewStatus
+                color: themeTextSecondary
+                font.pixelSize: 10 * scaleFactor
+                elide: Text.ElideRight
             }
 
             RowLayout {
@@ -1459,8 +1841,8 @@ Window {
                     anchors.margins: 8 * scaleFactor
                     spacing: 6 * scaleFactor
                     clip: true
-                    model: (backend.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backend.formatModel.length)
-                        ? backend.formatModel[rootWindow.formatDesignerSelectedFormatIndex].columns
+                    model: (backendSafe.formatModel.length > 0 && rootWindow.formatDesignerSelectedFormatIndex >= 0 && rootWindow.formatDesignerSelectedFormatIndex < backendSafe.formatModel.length)
+                        ? backendSafe.formatModel[rootWindow.formatDesignerSelectedFormatIndex].columns
                         : []
                     onModelChanged: {
                         if (formatRowsJumpToIndexNextChange >= 0 || formatRowsRestorePending) {
@@ -1486,7 +1868,7 @@ Window {
                         function applyFormulaTemplate(templateText) {
                             valueField.text = templateText
                             rootWindow.prepareFormatRowsModelChange(false)
-                            var updatedIndex = backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "value", templateText)
+                            var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "value", templateText)
                             rootWindow.markAndJumpFormatRow(updatedIndex)
                             valueField.forceActiveFocus()
                             valueField.cursorPosition = valueField.text.length
@@ -1497,8 +1879,13 @@ Window {
                             || widthField.activeFocus
                             || typeCombo.activeFocus
                             || (typeCombo.popup && typeCombo.popup.visible)
+                            || (formulaTemplateMenu && formulaTemplateMenu.visible)
                         )
                         onRowExpandedChanged: {
+                            if (rowExpanded) {
+                                rootWindow.formatRowsHighlightIndex = index
+                                rootWindow.formatDesignerSelectedRowIndex = index
+                            }
                             if (!rowExpanded && rootWindow.formatDesignerSelectedRowIndex === index) {
                                 rootWindow.formatDesignerSelectedRowIndex = -1
                             }
@@ -1510,7 +1897,6 @@ Window {
                         border.color: rowExpanded
                                       ? "#dc2626"
                                       : (rootWindow.formatRowsHighlightIndex === index
-                                      && rootWindow.formatEditorFocusType === ""
                                       ? "#dc2626"
                                       : (rootWindow.formatDesignerSelectedRowIndex === index ? themeLayer3 : themeLayer2))
                         border.width: 1
@@ -1559,7 +1945,7 @@ Window {
                                         return
                                     }
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                 }
                                 onAccepted: {
@@ -1573,7 +1959,7 @@ Window {
                                         return
                                     }
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
@@ -1623,7 +2009,7 @@ Window {
                                     }
                                     var mappedType = comboIndex === 1 ? "formula" : (comboIndex === 2 ? "empty" : "data")
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
+                                    var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "type", mappedType)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                 }
@@ -1670,7 +2056,7 @@ Window {
                                         return
                                     }
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                 }
                                 onAccepted: {
@@ -1684,7 +2070,7 @@ Window {
                                         return
                                     }
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "value", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
@@ -1693,6 +2079,40 @@ Window {
                                     focus = false
                                     rootWindow.clearFormatCreateEditorFocus()
                                     event.accepted = true
+                                }
+                            }
+
+                            Rectangle {
+                                id: sourceIndexButton
+                                Layout.preferredWidth: 34 * scaleFactor
+                                Layout.preferredHeight: 32 * scaleFactor
+                                radius: 4
+                                color: themePanel
+                                border.width: 1
+                                border.color: themeLayer2
+                                visible: !formatCreatePanel.selectedBuiltInFormat
+                                         && modelData.type === "data"
+                                         && valueField.activeFocus
+                                enabled: backendSafe.xmlPreviewHeaders.length > 0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "ix"
+                                    color: sourceIndexButton.enabled ? themeText : themeTextSecondary
+                                    font.pixelSize: 10 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: sourceIndexButton.enabled
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: {
+                                        rootWindow.formatDesignerSelectedRowIndex = rowIndex
+                                        rootWindow.formatRowsHighlightIndex = rowIndex
+                                        rootWindow.formatEditorFocusType = "value"
+                                        rootWindow.openPreviewDialogForIndex(formatCreatePanel.selectedFormatIndex, rowIndex)
+                                    }
                                 }
                             }
 
@@ -1775,7 +2195,7 @@ Window {
                                     }
                                     submittedByEnter = true
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
@@ -1843,7 +2263,7 @@ Window {
                                         widthValue = 14
                                     }
                                     rootWindow.prepareFormatRowsModelChange(false)
-                                    var updatedIndex = backend.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
+                                    var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "width", widthValue)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
                                 }
                                 onAccepted: {
@@ -1875,7 +2295,7 @@ Window {
                                 onClicked: {
                                     rootWindow.prepareFormatRowsModelChange(false)
                                     rootWindow.markFormatRowHighlight(-1)
-                                    backend.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
+                                    backendSafe.deleteFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index)
                                 }
                             }
                         }
@@ -1912,9 +2332,9 @@ Window {
                     fallbackPressed: themeLayer1
                     borderColor: themeLayer3
                     onClicked: {
-                        backend.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, formatNameField.text)
-                        backend.saveFormatByName(rootWindow.formatDesignerSelectedFormatIndex)
-                        backend.commitFormatEdit()
+                        backendSafe.renameFormatDefinition(rootWindow.formatDesignerSelectedFormatIndex, formatNameField.text)
+                        backendSafe.saveFormatByName(rootWindow.formatDesignerSelectedFormatIndex)
+                        backendSafe.commitFormatEdit()
                         processState = "formatDesigner"
                     }
                 }
@@ -1935,10 +2355,10 @@ Window {
                     borderColor: themeLayer3
                     onClicked: {
                         if (formatCreatePanel.selectedBuiltInFormat) {
-                            backend.cancelFormatEdit()
+                            backendSafe.cancelFormatEdit()
                             processState = "formatDesigner"
-                        } else if (backend.confirmDiscardFormatEdit()) {
-                            backend.cancelFormatEdit()
+                        } else if (backendSafe.confirmDiscardFormatEdit()) {
+                            backendSafe.cancelFormatEdit()
                             processState = "formatDesigner"
                         }
                     }
@@ -2357,7 +2777,7 @@ Window {
                             onAccepted: {
                                 var path = text.trim()
                                 if (path.length > 0) {
-                                    backend.applyBatchOutputDirectoryToAll(path)
+                                    backendSafe.applyBatchOutputDirectoryToAll(path)
                                 }
                             }
                         }
@@ -2389,7 +2809,7 @@ Window {
                         fallbackHover: themeLayer2
                         fallbackPressed: themeLayer1
                         borderColor: themeLayer3
-                        onClicked: backend.browseBatchOutputDirectoryForAll()
+                        onClicked: backendSafe.browseBatchOutputDirectoryForAll()
                     }
 
                     PixelButton {
@@ -2410,7 +2830,7 @@ Window {
                         fallbackPressed: themeLayer1
                         fallbackDisabled: "#9ca3af"
                         borderColor: themeLayer3
-                        onClicked: backend.applyBatchOutputDirectoryToAll(allBatchSaveDirField.text.trim())
+                        onClicked: backendSafe.applyBatchOutputDirectoryToAll(allBatchSaveDirField.text.trim())
                     }
                     }
                 }
@@ -2508,7 +2928,7 @@ Window {
                                             batchFileNameDrafts[index] = text
                                             batchFileNameDrafts = Object.assign({}, batchFileNameDrafts)
                                             rootWindow.rememberBatchOutputsScroll()
-                                            backend.updateBatchOutputFileName(index, text + "." + extCombo.currentText)
+                                            backendSafe.updateBatchOutputFileName(index, text + "." + extCombo.currentText)
                                         }
                                     }
 
@@ -2532,7 +2952,7 @@ Window {
 
                                         onCurrentTextChanged: {
                                             rootWindow.rememberBatchOutputsScroll()
-                                            backend.updateBatchOutputFileName(index, stripXlsx(modelData.fileName) + "." + currentText)
+                                            backendSafe.updateBatchOutputFileName(index, stripXlsx(modelData.fileName) + "." + currentText)
                                         }
                                     }
                                 }
@@ -2584,11 +3004,11 @@ Window {
                                         fallbackDisabled: themeInset
                                         onTextEdited: {
                                             rootWindow.rememberBatchOutputsScroll()
-                                            backend.updateBatchOutputDirectory(index, text)
+                                            backendSafe.updateBatchOutputDirectory(index, text)
                                         }
                                         onEditingFinished: {
                                             rootWindow.rememberBatchOutputsScroll()
-                                            backend.updateBatchOutputDirectory(index, text)
+                                            backendSafe.updateBatchOutputDirectory(index, text)
                                         }
                                     }
 
@@ -2622,7 +3042,7 @@ Window {
                                     onClicked: {
                                         rootWindow.clearActiveEditorFocus()
                                         rootWindow.batchRowHighlightIndex = index
-                                        backend.browseBatchOutputDirectory(index)
+                                        backendSafe.browseBatchOutputDirectory(index)
                                     }
                                 }
                             }
@@ -2678,7 +3098,7 @@ Window {
                         fallbackPressed: themeLayer1
                         fallbackDisabled: themeLayer2
                         borderColor: themeLayer3
-                        onClicked: backend.saveAllBatchOutputs()
+                        onClicked: backendSafe.saveAllBatchOutputs()
                     }
                 }
             }
@@ -2726,7 +3146,7 @@ Window {
                 fallbackPressed: themeLayer1
                 textColor: themeText
                 borderColor: themeLayer3
-                onClicked: backend.convertAnotherFile()
+                onClicked: backendSafe.convertAnotherFile()
             }
         }
     }
@@ -2853,3 +3273,4 @@ Window {
         }
     }
 }
+
