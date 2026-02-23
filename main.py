@@ -727,15 +727,12 @@ class Backend(QObject):
                 for col in raw_columns:
                     if not isinstance(col, dict):
                         continue
-                    try:
-                        width_value = int(col.get("width", 14) or 14)
-                    except Exception:
-                        width_value = 14
+                    row_type = self._sanitize_format_type(col.get("type", "data"))
                     columns.append({
-                        "col": str(col.get("col", "A")).upper()[:3] or "A",
-                        "type": str(col.get("type", "data")),
-                        "value": str(col.get("value", "")),
-                        "width": max(1, min(200, width_value)),
+                        "col": self._normalize_column_label(col.get("col", "A")),
+                        "type": row_type,
+                        "value": self._sanitize_format_value(row_type, col.get("value", "")),
+                        "width": self._sanitize_format_width(col.get("width", 14)),
                     })
             if not columns:
                 columns = self._default_columns("=C{r}*280")
@@ -794,6 +791,26 @@ class Backend(QObject):
     def _normalize_column_label(self, value):
         normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())
         return normalized[:3] if normalized else "A"
+
+    def _sanitize_column_input(self, value):
+        return "".join(ch for ch in str(value).upper() if ch.isalpha())[:3]
+
+    def _sanitize_format_type(self, value):
+        type_value = str(value).strip().lower()
+        return type_value if type_value in ("data", "formula", "empty") else "data"
+
+    def _sanitize_format_value(self, row_type, value):
+        safe_type = self._sanitize_format_type(row_type)
+        if safe_type == "empty":
+            return ""
+        return str(value)
+
+    def _sanitize_format_width(self, value):
+        try:
+            width_value = int(value)
+        except Exception:
+            width_value = 14
+        return max(1, min(200, width_value))
 
     def _sort_format_columns(self, columns):
         if not isinstance(columns, list) or not columns:
@@ -883,6 +900,20 @@ class Backend(QObject):
         setattr(self, thread_attr, None)
         if worker_attr:
             setattr(self, worker_attr, None)
+
+    def _request_worker_cancel(self, worker_attr):
+        worker = getattr(self, worker_attr, None)
+        if worker and hasattr(worker, "request_cancel"):
+            try:
+                worker.request_cancel()
+            except Exception:
+                pass
+
+    def _request_all_worker_cancels(self):
+        self._request_worker_cancel("worker")
+        self._request_worker_cancel("save_worker")
+        self._request_worker_cancel("batch_save_worker")
+        self._request_worker_cancel("path_scan_worker")
 
     def _stop_all_background_threads(self, timeout_ms=3000):
         self._stop_thread("thread", "worker", timeout_ms)
@@ -1092,23 +1123,17 @@ class Backend(QObject):
             return -1
         row = columns[row_index]
         if field == "col":
-            normalized = "".join(ch for ch in str(value).upper() if ch.isalpha())[:3]
+            normalized = self._sanitize_column_input(value)
             if normalized:
                 row["col"] = normalized
                 self._sort_format_columns(columns)
         elif field == "type":
-            type_value = str(value)
-            row["type"] = type_value if type_value in ("data", "formula", "empty") else "data"
-            if row["type"] == "empty":
-                row["value"] = ""
+            row["type"] = self._sanitize_format_type(value)
+            row["value"] = self._sanitize_format_value(row["type"], row.get("value", ""))
         elif field == "value":
-            row["value"] = str(value)
+            row["value"] = self._sanitize_format_value(row.get("type", "data"), value)
         elif field == "width":
-            try:
-                width_value = int(value)
-            except Exception:
-                width_value = 14
-            row["width"] = max(1, min(200, width_value))
+            row["width"] = self._sanitize_format_width(value)
         updated_index = -1
         for i, candidate in enumerate(columns):
             if candidate is row:
@@ -1224,6 +1249,7 @@ class Backend(QObject):
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self._stop_thread("path_scan_thread", "path_scan_worker")
         self.path_scan_thread = QThread()
         self.path_scan_worker = PathDiscoveryWorker(normalized_paths)
         self.path_scan_worker.moveToThread(self.path_scan_thread)
@@ -1253,8 +1279,7 @@ class Backend(QObject):
     def cleanupDroppedPathScan(self):
         if QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
-        self.path_scan_thread = None
-        self.path_scan_worker = None
+        self._stop_thread("path_scan_thread", "path_scan_worker")
 
 
     @pyqtSlot()
@@ -1309,6 +1334,7 @@ class Backend(QObject):
             self.root.setProperty("currentBatchIndex", self.current_batch_index)
             self.root.setProperty("totalBatchFiles", len(self.selected_files))
             self.root.setProperty("currentFileName", os.path.basename(self.selected_files[self.current_batch_index]))
+        self._stop_thread("thread", "worker")
         self.thread = QThread()
         selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
         self.worker = Worker([self.selected_files[self.current_batch_index]], self.xml_type, selected_format)
@@ -1419,6 +1445,7 @@ class Backend(QObject):
             self.root.setProperty("processState","converting")
         self.progress=0
         self.progressUpdated.emit(self.progress)
+        self._stop_thread("thread", "worker")
         self.thread=QThread()
         selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
         self.worker = Worker([self.selected_file], self.xml_type, selected_format)
@@ -1486,14 +1513,7 @@ class Backend(QObject):
     @pyqtSlot()
     def convertAnotherFile(self):
         self.cancel_requested = True
-        if self.worker:
-            self.worker.request_cancel()
-        if self.save_worker:
-            self.save_worker.request_cancel()
-        if self.batch_save_worker:
-            self.batch_save_worker.request_cancel()
-        if self.path_scan_worker:
-            self.path_scan_worker.request_cancel()
+        self._request_all_worker_cancels()
         self._stop_all_background_threads()
         self.resetProperties()
 
@@ -1521,10 +1541,7 @@ class Backend(QObject):
 
     def handleError(self,msg):
         if msg == "Operation cancelled by user.":
-            if self.thread:
-                self.thread.quit()
-                self.thread.wait()
-                self.thread = None
+            self._stop_thread("thread", "worker")
             if self.root:
                 if self.is_batch:
                     self.root.setProperty("processState", "batchReview")
@@ -1536,9 +1553,7 @@ class Backend(QObject):
             if self.current_batch_index < len(self.batch_file_statuses):
                 self.batch_file_statuses[self.current_batch_index] = "Failed"
                 self.refreshBatchFileStatusesProperty()
-            if self.thread:
-                self.thread.quit()
-                self.thread.wait()
+            self._stop_thread("thread", "worker")
             self.current_batch_index += 1
             if self.root:
                 self.root.setProperty("currentBatchIndex", self.current_batch_index)
@@ -1552,17 +1567,12 @@ class Backend(QObject):
         QMessageBox.critical(None,"Error",msg)
         if self.root:
             self.root.setProperty("processState","idle")
-        if self.thread:
-            self.thread.quit()
-            self.thread.wait()
+        self._stop_thread("thread", "worker")
 
     @pyqtSlot(object, str, str)
     def collectBatchResult(self, df, xml_type, xml_file):
         if self.cancel_requested:
-            if self.thread:
-                self.thread.quit()
-                self.thread.wait()
-                self.thread = None
+            self._stop_thread("thread", "worker")
             if self.root:
                 self.root.setProperty("processState", "batchReview")
             return
@@ -1583,9 +1593,7 @@ class Backend(QObject):
         if self.current_batch_index < len(self.batch_file_statuses):
             self.batch_file_statuses[self.current_batch_index] = "Done"
             self.refreshBatchFileStatusesProperty()
-        if self.thread:
-            self.thread.quit()
-            self.thread.wait()
+        self._stop_thread("thread", "worker")
 
         self.current_batch_index += 1
         if self.root:
@@ -1755,6 +1763,7 @@ class Backend(QObject):
         if self.root:
             self.root.setProperty("processState", "creating")
         self.progressUpdated.emit(0)
+        self._stop_thread("batch_save_thread", "batch_save_worker")
         self.batch_save_thread = QThread()
         self.batch_save_worker = BatchSaveWorker(self.batch_results, self.batch_outputs)
         self.batch_save_worker.moveToThread(self.batch_save_thread)
@@ -1768,31 +1777,19 @@ class Backend(QObject):
         if msg == "Operation cancelled by user.":
             if self.root:
                 self.root.setProperty("processState", "batchReview")
-            if self.batch_save_thread:
-                self.batch_save_thread.quit()
-                self.batch_save_thread.wait()
-            self.batch_save_thread = None
-            self.batch_save_worker = None
+            self._stop_thread("batch_save_thread", "batch_save_worker")
             return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
             self.root.setProperty("processState", "batchReview")
-        if self.batch_save_thread:
-            self.batch_save_thread.quit()
-            self.batch_save_thread.wait()
-        self.batch_save_thread = None
-        self.batch_save_worker = None
+        self._stop_thread("batch_save_thread", "batch_save_worker")
 
     @pyqtSlot(object)
     def handleBatchSaveFinished(self, saved_outputs):
         if self.cancel_requested:
             if self.root:
                 self.root.setProperty("processState", "batchReview")
-            if self.batch_save_thread:
-                self.batch_save_thread.quit()
-                self.batch_save_thread.wait()
-            self.batch_save_thread = None
-            self.batch_save_worker = None
+            self._stop_thread("batch_save_thread", "batch_save_worker")
             return
         self.batch_outputs = saved_outputs
         self.refreshBatchOutputsProperty()
@@ -1800,11 +1797,7 @@ class Backend(QObject):
         if self.root:
             self.root.setProperty("processState", "complete")
         QMessageBox.information(None, "Done", f"Saved {len(self.batch_outputs)} files successfully.")
-        if self.batch_save_thread:
-            self.batch_save_thread.quit()
-            self.batch_save_thread.wait()
-        self.batch_save_thread = None
-        self.batch_save_worker = None
+        self._stop_thread("batch_save_thread", "batch_save_worker")
 
     @pyqtSlot(object,str,str)
     def saveFile(self, df, xml_type, xml_file):
@@ -1820,18 +1813,17 @@ class Backend(QObject):
         )
         if save_path and not save_path.lower().endswith(".xlsx"): save_path += ".xlsx"
         if not save_path:
-            self.thread.quit()
-            self.thread.wait()
+            self._stop_thread("thread", "worker")
             self.resetProperties()
             return
         self.rememberSaveDirectory(os.path.dirname(save_path), batch=False)
         if not confirm_overwrite_paths([save_path], "Confirm Overwrite"):
-            self.thread.quit()
-            self.thread.wait()
+            self._stop_thread("thread", "worker")
             self.resetProperties()
             return
 
         self.progressUpdated.emit(90)
+        self._stop_thread("save_thread", "save_worker")
         self.save_thread = QThread()
         self.save_worker = SaveWorker(df, xml_type, save_path, xml_file)
         self.save_worker.moveToThread(self.save_thread)
@@ -1840,33 +1832,25 @@ class Backend(QObject):
         self.save_worker.saved.connect(self.handleSaved)
         self.save_thread.started.connect(self.save_worker.save)
         self.save_thread.start()
-        self.thread.quit()
-        self.thread.wait()
+        self._stop_thread("thread", "worker")
 
     def handleSaveError(self, msg):
         if msg == "Operation cancelled by user.":
             if self.root:
                 self.root.setProperty("processState", "idle")
-            if self.save_thread:
-                self.save_thread.quit()
-                self.save_thread.wait()
-                self.save_thread = None
+            self._stop_thread("save_thread", "save_worker")
             return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
             self.root.setProperty("processState", "idle")
-        self.save_thread.quit()
-        self.save_thread.wait()
+        self._stop_thread("save_thread", "save_worker")
 
     @pyqtSlot(str, str)
     def handleSaved(self, save_path, xml_file):
         if self.cancel_requested:
             if self.root:
                 self.root.setProperty("processState", "idle")
-            if self.save_thread:
-                self.save_thread.quit()
-                self.save_thread.wait()
-                self.save_thread = None
+            self._stop_thread("save_thread", "save_worker")
             return
         self.progressUpdated.emit(100)
         QMessageBox.information(None, "Done", f"Processed Excel saved:\n{save_path}")
@@ -1878,20 +1862,12 @@ class Backend(QObject):
         else:
             if self.root:
                 self.root.setProperty("processState", "complete")
-        self.save_thread.quit()
-        self.save_thread.wait()
+        self._stop_thread("save_thread", "save_worker")
 
     @pyqtSlot()
     def cancelCurrentOperation(self):
         self.cancel_requested = True
-        if self.worker:
-            self.worker.request_cancel()
-        if self.save_worker:
-            self.save_worker.request_cancel()
-        if self.batch_save_worker:
-            self.batch_save_worker.request_cancel()
-        if self.path_scan_worker:
-            self.path_scan_worker.request_cancel()
+        self._request_all_worker_cancels()
         self._stop_all_background_threads()
 
         if self.is_batch:
