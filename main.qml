@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Window
 import QtMultimedia
 import "controls"
+import "components"
 
 Window {
     id: rootWindow
@@ -3105,172 +3106,45 @@ Window {
         }
 
 
-        ColumnLayout {
+        CompleteView {
             visible: processState === "complete"
-            spacing: 20 * scaleFactor
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-
-            Text {
-                text: "Conversion Complete!"
-                font.pixelSize: 24 * scaleFactor
-                font.bold: true
-                Layout.alignment: Qt.AlignHCenter
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                color: themeText
-            }
-            Text {
-                text: isBatch
-                    ? "Batch conversion complete! " + totalBatchFiles + " files processed successfully."
-                    : "Your file has been successfully converted using " + selectionType
-                font.pixelSize: 14 * scaleFactor
-                Layout.alignment: Qt.AlignHCenter
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                color: themeText
-            }
-
-            PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40 * scaleFactor
-                text: "Convert Another File"
-                textPixelSize: 14 * scaleFactor
-                fallbackNormal: themeLayer3
-                fallbackHover: themeLayer2
-                fallbackPressed: themeLayer1
-                textColor: themeText
-                borderColor: themeLayer3
-                onClicked: backendSafe.convertAnotherFile()
-            }
+            scaleFactor: rootWindow.scaleFactor
+            isBatch: rootWindow.isBatch
+            totalBatchFiles: rootWindow.totalBatchFiles
+            selectionType: rootWindow.selectionType
+            themeText: rootWindow.themeText
+            themeLayer3: rootWindow.themeLayer3
+            themeLayer2: rootWindow.themeLayer2
+            themeLayer1: rootWindow.themeLayer1
+            backendSafe: rootWindow.backendSafe
         }
     }
 
-    Item {
-        visible: processState === "converting" || processState === "creating"
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: 20 * scaleFactor
-        anchors.rightMargin: 20 * scaleFactor
-        anchors.bottomMargin: 16 * scaleFactor
-        height: 40 * scaleFactor
-        z: 120
-
-        PixelButton {
-            sliceLeft: 5
-            sliceRight: 5
-            sliceTop: 4
-            sliceBottom: 4
-            anchors.fill: parent
-            text: "Cancel"
-            textPixelSize: 12 * scaleFactor
-            fallbackNormal: themePanel
-            fallbackHover: themeLayer2
-            fallbackPressed: themeLayer1
-            textColor: themeText
-            borderColor: themeLayer3
-            onClicked: rootWindow.openConfirmation("cancelProcess", "Cancel the current process?")
-        }
+    CancelBar {
+        visibleWhenRunning: processState === "converting" || processState === "creating"
+        scaleFactor: rootWindow.scaleFactor
+        themePanel: rootWindow.themePanel
+        themeLayer3: rootWindow.themeLayer3
+        themeLayer2: rootWindow.themeLayer2
+        themeLayer1: rootWindow.themeLayer1
+        themeText: rootWindow.themeText
+        onCancelRequested: rootWindow.openConfirmation("cancelProcess", "Cancel the current process?")
     }
 
-    Item {
+    CompactHeader {
         visible: compactHeaderMode && processState !== "converting" && processState !== "creating" && processState !== "complete" && processState !== "formatDesigner" && processState !== "formatCreate"
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.topMargin: 12 * scaleFactor
-        anchors.leftMargin: 20 * scaleFactor
-        anchors.rightMargin: 20 * scaleFactor
-        height: compactGifSize
-        z: 90
-
-        Row {
-            anchors.fill: parent
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 6 * scaleFactor
-
-            AnimatedImage {
-                id: compactCopywriting
-                width: compactGifSize
-                height: compactGifSize
-                source: "images/copywriting.gif"
-                speed: 1.0
-                fillMode: Image.PreserveAspectFit
-                transformOrigin: Item.Center
-                scale: 1.2
-                anchors.verticalCenter: parent.verticalCenter
-            }
-
-            Item {
-                width: Math.max(0, parent.width - compactCopywriting.width - (6 * scaleFactor))
-                height: compactGifSize
-                anchors.verticalCenter: parent.verticalCenter
-
-                Column {
-                    anchors.fill: parent
-                    spacing: 0
-
-                    Text {
-                        width: parent.width
-                        height: parent.height * 0.58
-                        text: qsTr("CubeFlow")
-                        color: "white"
-                        font.family: appFontFamily
-                        font.pixelSize: Math.max(24, compactGifSize * 0.32)
-                        font.bold: true
-                        verticalAlignment: Text.AlignBottom
-                        horizontalAlignment: Text.AlignLeft
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        width: parent.width
-                        height: parent.height * 0.42
-                        text: "by wahchachaps"
-                        color: themeTextSecondary
-                        font.family: appFontFamily
-                        font.pixelSize: Math.max(13, compactGifSize * 0.18)
-                        verticalAlignment: Text.AlignTop
-                        horizontalAlignment: Text.AlignLeft
-                        elide: Text.ElideRight
-                    }
-                }
-            }
-        }
+        scaleFactor: rootWindow.scaleFactor
+        compactGifSize: rootWindow.compactGifSize
+        appFontFamily: appFontFamily
+        themeTextSecondary: rootWindow.themeTextSecondary
     }
 
-    Item {
+    BackButton {
         id: backButton
         visible: processState === "batchReview" || processState === "selecting"
-        z: 100
-        width: 36 * scaleFactor
-        height: 36 * scaleFactor
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.leftMargin: 12 * scaleFactor
-        anchors.topMargin: 12 * scaleFactor
-
-        Text {
-            anchors.centerIn: parent
-            text: "\u2190"
-            color: backButtonArea.pressed ? themeLayer3 : (backButtonArea.containsMouse ? themeLayer3 : themeLayer3)
-            font.pixelSize: 18 * scaleFactor
-            font.bold: true
-        }
-
-        MouseArea {
-            id: backButtonArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: rootWindow.openConfirmation("headerBack", "Go back to the previous screen?")
-        }
+        scaleFactor: rootWindow.scaleFactor
+        themeLayer3: rootWindow.themeLayer3
+        onClicked: rootWindow.openConfirmation("headerBack", "Go back to the previous screen?")
     }
 }
 
