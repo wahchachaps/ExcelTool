@@ -10,6 +10,7 @@ from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 os.environ.setdefault("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic")
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts.warning=false")
 
 
 def ensure_xlsx_extension(file_name):
@@ -2079,6 +2080,7 @@ class Backend(QObject):
 
 if __name__=="__main__":
     app=QApplication(sys.argv)
+    app.setFont(QFont("Segoe UI", 10))
     app.setStyle("Fusion")
     app_font_family = app.font().family()
     font_path = os.path.join(os.path.dirname(__file__), "fonts", "Minecraft.ttf")
