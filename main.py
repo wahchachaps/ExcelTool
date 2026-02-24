@@ -1,9 +1,10 @@
-﻿import sys
+import sys
 import os
 import json
 import copy
+import tempfile
 import pandas as pd
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings, QTimer
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings, QTimer, QStandardPaths
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtGui import QIcon, QFontDatabase, QFont
@@ -11,6 +12,45 @@ from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 os.environ.setdefault("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic")
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts.warning=false")
+
+def _app_base_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def _resource_base_dir():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return getattr(sys, "_MEIPASS")
+    return _app_base_dir()
+
+APP_BASE_DIR = _app_base_dir()
+RESOURCE_BASE_DIR = _resource_base_dir()
+
+def _user_data_dir():
+    candidates = []
+    docs = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    if docs:
+        candidates.append(os.path.join(docs, "CubeFlow"))
+    candidates.append(os.path.join(os.path.expanduser("~"), "Documents", "CubeFlow"))
+    candidates.append(os.path.join(tempfile.gettempdir(), "CubeFlow"))
+
+    for candidate in candidates:
+        try:
+            if not candidate:
+                continue
+            os.makedirs(candidate, exist_ok=True)
+            probe_path = os.path.join(candidate, ".write_probe.tmp")
+            with open(probe_path, "w", encoding="utf-8") as fp:
+                fp.write("ok")
+            os.remove(probe_path)
+            return candidate
+        except Exception:
+            continue
+
+    return os.path.join(tempfile.gettempdir(), "CubeFlow")
+
+def _initial_formats_dir():
+    return os.path.join(_user_data_dir(), "formats")
 
 
 def ensure_xlsx_extension(file_name):
@@ -430,14 +470,6 @@ class Worker(QObject):
             label_map = self._label_presets_map()
             header_row_1 = [""] * max_col
             header_row_2 = [""] * max_col
-            clock_preset = label_map.get("clock", {"row1": "0-0:1.0.0", "row2": "Clock"})
-            edis_preset = label_map.get("edis_status", {"row1": "0-0:96.240.12 [hex]", "row2": "EDIS status"})
-            if max_col > 0:
-                header_row_1[0] = str(clock_preset.get("row1", "0-0:1.0.0"))
-                header_row_2[0] = str(clock_preset.get("row2", "Clock"))
-            if max_col > 1:
-                header_row_1[1] = str(edis_preset.get("row1", "0-0:96.240.12 [hex]"))
-                header_row_2[1] = str(edis_preset.get("row2", "EDIS status"))
             final_rows = []
             for i in range(len(df_data)):
                 row = [""] * max_col
@@ -690,9 +722,10 @@ class Backend(QObject):
         self.batch_outputs = []
         self.batch_file_statuses = []
         self.cancel_requested = False
-        self.formats_dir = os.path.join(os.path.dirname(__file__), "formats")
+        self.formats_dir = _initial_formats_dir()
         self.formats_path = os.path.join(self.formats_dir, "format_model.json")
         self.format_save_path = self.formats_path
+        self.custom_label_options = self._custom_label_presets()
         self.format_model = self._load_or_default_formats()
         self.xml_type_options = []
         self.format_designer_status = ""
@@ -703,12 +736,14 @@ class Backend(QObject):
         self._format_edit_snapshot = None
         self._format_edit_active = False
         self._last_save_payload = None
-        self.custom_label_options = self._custom_label_presets()
         self.settings = QSettings("CubeFlow", "CubeFlow")
         self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
         self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
         self.last_batch_dir = str(self.settings.value("lastBatchDir", "", str))
         self.xml_type = str(self.settings.value("lastXmlType", "", str))
+        saved_format_path = str(self.settings.value("formatSavePath", "", str)).strip()
+        if saved_format_path and "AppData\\Local\\CubeFlow\\formats\\format_model.json" in saved_format_path:
+            self.settings.remove("formatSavePath")
         self.format_save_path = self.formats_path
         self._refresh_xml_type_options(emit_signal=False)
 
@@ -767,8 +802,8 @@ class Backend(QObject):
 
     def _default_columns(self, formula):
         return [
-            {"col": "A", "type": "data", "value": "0", "width": 17, "labelKey": "clock"},
-            {"col": "B", "type": "data", "value": "1", "width": 17, "labelKey": "edis_status"},
+            {"col": "A", "type": "data", "value": "0", "width": 17, "labelKey": ""},
+            {"col": "B", "type": "data", "value": "1", "width": 17, "labelKey": ""},
             {"col": "C", "type": "data", "value": "2", "width": 14, "labelKey": ""},
             {"col": "D", "type": "formula", "value": formula, "width": 14, "labelKey": ""},
         ]
@@ -868,6 +903,8 @@ class Backend(QObject):
 
     def _normalize_loaded_formats(self, raw_formats):
         normalized = []
+        if isinstance(raw_formats, dict):
+            raw_formats = [raw_formats]
         if not isinstance(raw_formats, list):
             return normalized
         for item in raw_formats:
@@ -895,18 +932,82 @@ class Backend(QObject):
             normalized.append({"name": name, "columns": columns})
         return normalized
 
+    def _merge_format_entries(self, base_formats, extra_formats):
+        merged = []
+        seen = set()
+        for fmt in base_formats:
+            name = str((fmt or {}).get("name", "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            merged.append(fmt)
+            seen.add(key)
+        for fmt in extra_formats:
+            name = str((fmt or {}).get("name", "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            merged.append(fmt)
+            seen.add(key)
+        return merged
+
+    def _load_sidecar_formats(self):
+        extras = []
+        try:
+            if not os.path.isdir(self.formats_dir):
+                return extras
+            for entry in os.listdir(self.formats_dir):
+                if not entry.lower().endswith(".json"):
+                    continue
+                if entry.lower() == "format_model.json":
+                    continue
+                path = os.path.join(self.formats_dir, entry)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    with open(path, "r", encoding="utf-8") as fp:
+                        loaded = json.load(fp)
+                    parsed = self._normalize_loaded_formats(loaded)
+                    if parsed:
+                        extras.extend(parsed)
+                except Exception:
+                    continue
+        except Exception:
+            return extras
+        return extras
+
     def _load_or_default_formats(self):
+        self._ensure_formats_storage_writable()
         os.makedirs(self.formats_dir, exist_ok=True)
+        base_formats = []
         if os.path.exists(self.formats_path):
             try:
                 with open(self.formats_path, "r", encoding="utf-8") as fp:
                     loaded = json.load(fp)
                 parsed = self._normalize_loaded_formats(loaded)
                 if parsed:
-                    return parsed
+                    base_formats = parsed
             except Exception:
                 pass
-        return self._default_formats()
+        if not base_formats:
+            bundled_formats_path = os.path.join(RESOURCE_BASE_DIR, "formats", "format_model.json")
+            if os.path.exists(bundled_formats_path):
+                try:
+                    with open(bundled_formats_path, "r", encoding="utf-8") as fp:
+                        loaded = json.load(fp)
+                    parsed = self._normalize_loaded_formats(loaded)
+                    if parsed:
+                        base_formats = parsed
+                except Exception:
+                    pass
+        if not base_formats:
+            base_formats = self._default_formats()
+        sidecars = self._load_sidecar_formats()
+        return self._merge_format_entries(base_formats, sidecars)
 
     def _refresh_xml_type_options(self, emit_signal=True):
         self.xml_type_options = [fmt.get("name", "") for fmt in self.format_model if fmt.get("name", "")]
@@ -1005,36 +1106,143 @@ class Backend(QObject):
             os.makedirs(self.formats_dir, exist_ok=True)
             if self._only_builtin_formats_left():
                 if os.path.exists(target_path):
-                    result = QMessageBox.question(
-                        None,
-                        "Delete Format File",
-                        f"Only built-in formats remain.\n\nDelete this JSON file from disk?\n{target_path}",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.No
-                    )
-                    if result == QMessageBox.StandardButton.Yes:
-                        os.remove(target_path)
-                        self._set_format_designer_status(f"Deleted format file from disk: {target_path}")
-                    else:
-                        with open(target_path, "w", encoding="utf-8") as fp:
-                            json.dump(self.format_model, fp, indent=2)
-                        self._set_format_designer_status(f"Kept format file and saved built-in formats: {target_path}")
+                    self._prepare_file_for_write(target_path)
+                    with open(target_path, "w", encoding="utf-8") as fp:
+                        json.dump(self.format_model, fp, indent=2)
+                    self._hide_file_if_supported(target_path)
+                    self._set_format_designer_status(f"Kept format file and saved built-in formats: {target_path}")
                 else:
                     self._set_format_designer_status("Only built-in formats remain. No format file found to delete.")
                 return
+            self._prepare_file_for_write(target_path)
             with open(target_path, "w", encoding="utf-8") as fp:
                 json.dump(self.format_model, fp, indent=2)
+            self._hide_file_if_supported(target_path)
             self._set_format_designer_status(f"Updated format file: {target_path}")
         except Exception as e:
             self._set_format_designer_status(f"Failed to update format file: {e}")
 
     def _autosave_formats(self):
+        if not self._ensure_formats_storage_writable():
+            self._set_format_designer_status("Failed to auto-save format file: no writable format storage path.")
+            return
         try:
             os.makedirs(self.formats_dir, exist_ok=True)
+            self._prepare_file_for_write(self.formats_path)
             with open(self.formats_path, "w", encoding="utf-8") as fp:
                 json.dump(self.format_model, fp, indent=2)
-        except Exception as e:
-            self._set_format_designer_status(f"Failed to auto-save format file: {e}")
+            self._hide_file_if_supported(self.formats_path)
+            return
+        except Exception:
+            pass
+        if self._switch_to_next_writable_formats_storage():
+            try:
+                os.makedirs(self.formats_dir, exist_ok=True)
+                self._prepare_file_for_write(self.formats_path)
+                with open(self.formats_path, "w", encoding="utf-8") as fp:
+                    json.dump(self.format_model, fp, indent=2)
+                self._hide_file_if_supported(self.formats_path)
+                return
+            except Exception as e:
+                self._set_format_designer_status(f"Failed to auto-save format file: {e}")
+                return
+        self._set_format_designer_status("Failed to auto-save format file: permission denied for all storage paths.")
+
+    def _probe_writable_dir(self, directory):
+        try:
+            os.makedirs(directory, exist_ok=True)
+            probe = os.path.join(directory, ".write_probe.tmp")
+            with open(probe, "w", encoding="utf-8") as fp:
+                fp.write("ok")
+            os.remove(probe)
+            return True
+        except Exception:
+            return False
+
+    def _format_storage_candidates(self):
+        current = self.formats_dir
+        candidates = [current]
+        docs = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        if docs:
+            candidates.append(os.path.join(docs, "CubeFlow", "formats"))
+        candidates.append(os.path.join(os.path.expanduser("~"), "Documents", "CubeFlow", "formats"))
+        candidates.append(os.path.join(tempfile.gettempdir(), "CubeFlow", "formats"))
+        unique = []
+        seen = set()
+        for item in candidates:
+            key = os.path.normcase(os.path.normpath(item))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        return unique
+
+    def _set_formats_storage(self, directory):
+        self.formats_dir = directory
+        self.formats_path = os.path.join(self.formats_dir, "format_model.json")
+        self.format_save_path = self.formats_path
+        if hasattr(self, "settings") and self.settings is not None:
+            self.settings.setValue("formatSavePath", self.formats_path)
+            self.formatSavePathChanged.emit()
+
+    def _ensure_formats_storage_writable(self):
+        for candidate in self._format_storage_candidates():
+            if self._probe_writable_dir(candidate):
+                if os.path.normcase(os.path.normpath(candidate)) != os.path.normcase(os.path.normpath(self.formats_dir)):
+                    self._set_formats_storage(candidate)
+                    self._set_format_designer_status(f"Switched format storage to writable path: {self.formats_path}")
+                return True
+        return False
+
+    def _switch_to_next_writable_formats_storage(self):
+        current_key = os.path.normcase(os.path.normpath(self.formats_dir))
+        candidates = self._format_storage_candidates()
+        start_idx = 0
+        for i, c in enumerate(candidates):
+            if os.path.normcase(os.path.normpath(c)) == current_key:
+                start_idx = i + 1
+                break
+        for candidate in candidates[start_idx:]:
+            if self._probe_writable_dir(candidate):
+                self._set_formats_storage(candidate)
+                self._set_format_designer_status(f"Switched format storage to writable path: {self.formats_path}")
+                return True
+        return False
+
+    def _hide_file_if_supported(self, path):
+        if not path or not os.path.exists(path):
+            return
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            FILE_ATTRIBUTE_HIDDEN = 0x02
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+            if attrs == -1:
+                return
+            if not (attrs & FILE_ATTRIBUTE_HIDDEN):
+                ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs | FILE_ATTRIBUTE_HIDDEN)
+        except Exception:
+            pass
+
+    def _prepare_file_for_write(self, path):
+        if not path or os.name != "nt" or not os.path.exists(path):
+            return
+        try:
+            import ctypes
+            FILE_ATTRIBUTE_READONLY = 0x01
+            FILE_ATTRIBUTE_HIDDEN = 0x02
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+            if attrs == -1:
+                return
+            new_attrs = attrs & ~FILE_ATTRIBUTE_READONLY
+            new_attrs = new_attrs & ~FILE_ATTRIBUTE_HIDDEN
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), new_attrs)
+        except Exception:
+            pass
+
+    def _autosave_format_model_changes(self):
+        self._autosave_formats()
 
     def _safe_format_filename(self, name):
         raw = str(name or "").strip()
@@ -1234,6 +1442,7 @@ class Backend(QObject):
         self.format_model.append({"name": name, "columns": self._default_columns("=C{r}*280")})
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
+        self._autosave_format_model_changes()
 
     @pyqtSlot(int, result=int)
     def duplicateFormatDefinition(self, index):
@@ -1286,6 +1495,7 @@ class Backend(QObject):
         })
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
+        self._autosave_format_model_changes()
 
         new_index = len(self.format_model) - 1
         if self.root:
@@ -1302,6 +1512,7 @@ class Backend(QObject):
         self.format_model.append({"name": name, "columns": self._default_columns("=C{r}*280")})
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
+        self._autosave_format_model_changes()
         return len(self.format_model) - 1
 
     @pyqtSlot(int)
@@ -1320,6 +1531,7 @@ class Backend(QObject):
         self._format_edit_active = False
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
+        self._autosave_format_model_changes()
         self._set_format_designer_status("Discarded unsaved format changes.")
 
     @pyqtSlot(result=bool)
@@ -1339,6 +1551,7 @@ class Backend(QObject):
     def commitFormatEdit(self):
         self._format_edit_snapshot = None
         self._format_edit_active = False
+        self._autosave_format_model_changes()
 
     @pyqtSlot(int)
     def deleteFormatDefinition(self, index):
@@ -1389,6 +1602,7 @@ class Backend(QObject):
         self.format_model[index]["name"] = next_name
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
+        self._autosave_format_model_changes()
 
     @pyqtSlot(int, result=int)
     def addFormatRow(self, format_index):
@@ -1409,6 +1623,7 @@ class Backend(QObject):
             if candidate is new_row:
                 new_index = i
                 break
+        self._autosave_format_model_changes()
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return new_index
 
@@ -1420,6 +1635,7 @@ class Backend(QObject):
         if row_index < 0 or row_index >= len(columns):
             return
         columns.pop(row_index)
+        self._autosave_format_model_changes()
         self.formatModelChanged.emit()
 
     @pyqtSlot(int, int, str, 'QVariant', result=int)
@@ -1452,6 +1668,7 @@ class Backend(QObject):
                 break
         if updated_index < 0:
             updated_index = row_index
+        self._autosave_format_model_changes()
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return updated_index
 
@@ -1469,6 +1686,7 @@ class Backend(QObject):
             return from_index
         moved = columns.pop(from_index)
         columns.insert(safe_to, moved)
+        self._autosave_format_model_changes()
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return safe_to
 
@@ -1551,6 +1769,7 @@ class Backend(QObject):
                 break
         if updated_index < 0:
             updated_index = row_index
+        self._autosave_format_model_changes()
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return updated_index
 
@@ -1559,8 +1778,10 @@ class Backend(QObject):
         try:
             target_path = self.formats_path
             os.makedirs(self.formats_dir, exist_ok=True)
+            self._prepare_file_for_write(target_path)
             with open(target_path, "w", encoding="utf-8") as fp:
                 json.dump(self.format_model, fp, indent=2)
+            self._hide_file_if_supported(target_path)
             self._refresh_xml_type_options()
             self._set_format_designer_status(f"Saved formats to {target_path}")
             QMessageBox.information(None, "Formats Saved", f"Formats saved to:\n{target_path}")
@@ -1583,7 +1804,6 @@ class Backend(QObject):
                 json.dump(fmt, fp, indent=2)
             self._autosave_formats()
             self._set_format_designer_status(f"Saved format to {target_path}")
-            QMessageBox.information(None, "Format Saved", f"Format saved to:\n{target_path}")
         except Exception as e:
             self._set_format_designer_status(f"Failed to save format: {e}")
 
@@ -2392,7 +2612,7 @@ if __name__=="__main__":
     app.setFont(QFont("Segoe UI", 10))
     app.setStyle("Fusion")
     app_font_family = app.font().family()
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "Minecraft.ttf")
+    font_path = os.path.join(RESOURCE_BASE_DIR, "fonts", "Minecraft.ttf")
     if os.path.exists(font_path):
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
@@ -2400,7 +2620,7 @@ if __name__=="__main__":
             if loaded_families:
                 app_font_family = loaded_families[0]
                 app.setFont(QFont(app_font_family))
-    icon_path=os.path.join(os.path.dirname(__file__),"images","icon.png")
+    icon_path=os.path.join(RESOURCE_BASE_DIR,"images","icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     engine=QQmlApplicationEngine()
@@ -2409,7 +2629,7 @@ if __name__=="__main__":
     engine.rootContext().setContextProperty("backend",backend)
     engine.rootContext().setContextProperty("appFontFamily", app_font_family)
 
-    qml_file=os.path.join(os.path.dirname(__file__),"main.qml")
+    qml_file=os.path.join(RESOURCE_BASE_DIR,"main.qml")
     engine.load(QUrl.fromLocalFile(qml_file))
     if not engine.rootObjects(): sys.exit(-1)
 

@@ -85,6 +85,7 @@ Window {
     property int batchRowHighlightIndex: -1
     property string confirmAction: ""
     property string confirmMessage: ""
+    property int pendingDeleteFormatIndex: -1
     property bool previewSelectMode: false
     property int previewSelectFormatIndex: -1
     property int previewSelectRowIndex: -1
@@ -412,7 +413,15 @@ Window {
             }
         } else if (actionId === "batchReviewBack") {
             backendSafe.convertAnotherFile()
+        } else if (actionId === "deleteFormat") {
+            if (pendingDeleteFormatIndex >= 0) {
+                backendSafe.deleteFormatDefinition(pendingDeleteFormatIndex)
+            }
+        } else if (actionId === "formatCreateDiscard") {
+            backendSafe.cancelFormatEdit()
+            processState = "formatDesigner"
         }
+        pendingDeleteFormatIndex = -1
         confirmAction = ""
     }
 
@@ -1668,7 +1677,8 @@ Window {
                                 fallbackDisabled: "#9ca3af"
                                 borderColor: "#dc2626"
                                 onClicked: {
-                                    backendSafe.deleteFormatDefinition(index)
+                                    rootWindow.pendingDeleteFormatIndex = index
+                                    rootWindow.openConfirmation("deleteFormat", "Delete this format?")
                                 }
                             }
                         }
@@ -2691,9 +2701,8 @@ Window {
                         if (formatCreatePanel.selectedBuiltInFormat) {
                             backendSafe.cancelFormatEdit()
                             processState = "formatDesigner"
-                        } else if (backendSafe.confirmDiscardFormatEdit()) {
-                            backendSafe.cancelFormatEdit()
-                            processState = "formatDesigner"
+                        } else {
+                            rootWindow.openConfirmation("formatCreateDiscard", "Your work will be discarded. Continue?")
                         }
                     }
                 }
