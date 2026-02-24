@@ -40,10 +40,16 @@ Window {
             formatRowsHighlightIndex = -1
             formatEditorFocusType = ""
             formatRowsJumpToIndexNextChange = -1
+            formatCompactLabelsMode = false
         }
         if (processState !== "formatDesigner" && processState !== "formatCreate") {
             rootWindow.formatDesignerSelectedFormatIndex = 0
             rootWindow.formatDesignerSelectedRowIndex = -1
+        }
+    }
+    onFormatCompactLabelsModeChanged: {
+        if (!formatCompactLabelsMode) {
+            clearFormatCreateEditorFocus()
         }
     }
 
@@ -63,6 +69,7 @@ Window {
     property int formatDesignerSelectedFormatIndex: 0
     property int formatDesignerSelectedRowIndex: -1
     property string formatEditorFocusType: ""
+    property bool formatCompactLabelsMode: false
     property real primaryControlHeight: 38 * scaleFactor
     property real primaryControlFontSize: 12 * scaleFactor
     property bool compactBatchControls: width <= 540
@@ -82,11 +89,15 @@ Window {
     property int previewSelectFormatIndex: -1
     property int previewSelectRowIndex: -1
     property var backendSafe: (backend !== null && backend !== undefined) ? backend : backendNull
+    property bool formatDragGhostVisible: false
+    property real formatDragGhostY: 0
+    property string formatDragGhostText: ""
 
     QtObject {
         id: backendNull
         property var formatModel: []
         property var xmlTypeOptions: []
+        property var customLabelOptions: []
         property string formatDesignerStatus: ""
         property var xmlPreviewHeaders: []
         property var xmlPreviewRows: []
@@ -100,6 +111,7 @@ Window {
         function updateFormatRow(_a, _b, _c, _d) { return -1 }
         function createFormatDraft() { return -1 }
         function addFormatRow(_i) { return -1 }
+        function moveFormatRow(_a, _b, _c) { return -1 }
 
         function setSelectionType(_t) {}
         function selectFile() {}
@@ -562,6 +574,83 @@ Window {
         } else {
             forceActiveFocus(Qt.ShortcutFocusReason)
         }
+    }
+
+    function customLabelOptionsList() {
+        if (!backendSafe || !backendSafe.customLabelOptions) {
+            return []
+        }
+        return backendSafe.customLabelOptions
+    }
+
+    function customLabelOptionsByType(rowType) {
+        var typeName = String(rowType || "data").toLowerCase()
+        var options = customLabelOptionsList()
+        if (typeName === "formula") {
+            var formulaAllowed = { "demand": true, "kwh": true, "kvarh": true }
+            var filtered = []
+            for (var i = 0; i < options.length; i++) {
+                var k = String(options[i] && options[i].key ? options[i].key : "")
+                if (formulaAllowed[k]) {
+                    filtered.push(options[i])
+                }
+            }
+            return filtered
+        }
+        return options
+    }
+
+    function customLabelModel(rowType) {
+        var options = customLabelOptionsByType(rowType)
+        var labels = ["(No Label)"]
+        for (var i = 0; i < options.length; i++) {
+            var row2 = String(options[i] && options[i].row2 ? options[i].row2 : "")
+            labels.push(row2)
+        }
+        return labels
+    }
+
+    function customLabelKeyForIndex(comboIndex, rowType) {
+        if (comboIndex <= 0) {
+            return ""
+        }
+        var options = customLabelOptionsByType(rowType)
+        var idx = comboIndex - 1
+        if (idx < 0 || idx >= options.length) {
+            return ""
+        }
+        return String(options[idx] && options[idx].key ? options[idx].key : "")
+    }
+
+    function customLabelIndexForKey(labelKey, rowType) {
+        var key = String(labelKey || "")
+        if (key.length === 0) {
+            return 0
+        }
+        if (key.indexOf("custom:") === 0) {
+            return 0
+        }
+        var options = customLabelOptionsByType(rowType)
+        for (var i = 0; i < options.length; i++) {
+            if (String(options[i] && options[i].key ? options[i].key : "") === key) {
+                return i + 1
+            }
+        }
+        return 0
+    }
+
+    function customLabelIsCustom(labelKey) {
+        return String(labelKey || "").indexOf("custom:") === 0
+    }
+
+    function customLabelTextFromKey(labelKey) {
+        var key = String(labelKey || "")
+        return key.indexOf("custom:") === 0 ? key.slice(7) : ""
+    }
+
+    function customLabelKeyFromText(textValue) {
+        var t = String(textValue || "").trim()
+        return t.length > 0 ? ("custom:" + t) : ""
     }
 
     onSelectionTypeChanged: {
@@ -1776,6 +1865,12 @@ Window {
                 Layout.bottomMargin: 2 * scaleFactor
                 spacing: 6 * scaleFactor
 
+                Item {
+                    visible: !formatCreatePanel.selectedBuiltInFormat
+                    Layout.preferredWidth: 6 * scaleFactor
+                    Layout.preferredHeight: 1
+                }
+
                 Text {
                     Layout.preferredWidth: 48 * scaleFactor
                     text: "Column"
@@ -1788,6 +1883,18 @@ Window {
                 }
 
                 Text {
+                    Layout.fillWidth: true
+                    text: "Label"
+                    color: themeText
+                    font.pixelSize: 9 * scaleFactor
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    visible: rootWindow.formatCompactLabelsMode
+                    opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "label") ? 1.0 : 0.0
+                }
+
+                Text {
                     Layout.preferredWidth: 82 * scaleFactor
                     text: "Source"
                     color: themeText
@@ -1795,6 +1902,7 @@ Window {
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
+                    visible: !rootWindow.formatCompactLabelsMode
                     opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "source") ? 1.0 : 0.0
                 }
 
@@ -1806,6 +1914,7 @@ Window {
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
+                    visible: !rootWindow.formatCompactLabelsMode
                     opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "value") ? 1.0 : 0.0
                 }
 
@@ -1817,11 +1926,24 @@ Window {
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
+                    visible: !rootWindow.formatCompactLabelsMode
                     opacity: (rootWindow.formatEditorFocusType === "" || rootWindow.formatEditorFocusType === "width") ? 1.0 : 0.0
                 }
 
-                Item {
-                    Layout.preferredWidth: 50 * scaleFactor
+                PixelButton {
+                    sliceLeft: 4
+                    sliceRight: 4
+                    sliceTop: 4
+                    sliceBottom: 4
+                    Layout.preferredWidth: 26 * scaleFactor
+                    Layout.preferredHeight: 22 * scaleFactor
+                    text: rootWindow.formatCompactLabelsMode ? "<" : ">"
+                    textPixelSize: 10 * scaleFactor
+                    fallbackNormal: themePanel
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    borderColor: themeLayer3
+                    onClicked: rootWindow.formatCompactLabelsMode = !rootWindow.formatCompactLabelsMode
                 }
             }
 
@@ -1863,6 +1985,8 @@ Window {
 
                     delegate: Rectangle {
                         property int rowIndex: index
+                        property real dragStartGlobalY: 0
+                        property real dragStartContentY: 0
                         width: ListView.view.width
                         height: 50 * scaleFactor
                         radius: 5
@@ -1880,6 +2004,9 @@ Window {
                             || widthField.activeFocus
                             || typeCombo.activeFocus
                             || (typeCombo.popup && typeCombo.popup.visible)
+                            || (rootWindow.formatCompactLabelsMode && labelCustomField.activeFocus)
+                            || (rootWindow.formatCompactLabelsMode && labelPresetCombo.activeFocus)
+                            || (rootWindow.formatCompactLabelsMode && labelPresetCombo.popup && labelPresetCombo.popup.visible)
                             || (formulaTemplateMenu && formulaTemplateMenu.visible)
                         )
                         onRowExpandedChanged: {
@@ -1907,6 +2034,73 @@ Window {
                             anchors.margins: 6 * scaleFactor
                             spacing: 6 * scaleFactor
 
+                            Rectangle {
+                                visible: !formatCreatePanel.selectedBuiltInFormat
+                                Layout.preferredWidth: 6 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
+                                radius: 4
+                                color: dragHandleArea.pressed ? themeLayer1 : (dragHandleArea.containsMouse ? themeLayer2 : themePanel)
+                                border.width: 1
+                                border.color: themeLayer3
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "||"
+                                    color: themeText
+                                    font.pixelSize: 7 * scaleFactor
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    id: dragHandleArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.SizeVerCursor
+                                    preventStealing: true
+                                    onPressed: function(mouse) {
+                                        var p = parent.mapToItem(rootWindow.contentItem, mouse.x, mouse.y)
+                                        dragStartGlobalY = p.y
+                                        dragStartContentY = formatRowsListView.contentY
+                                        rootWindow.formatDragGhostVisible = true
+                                        rootWindow.formatDragGhostY = p.y - (18 * scaleFactor)
+                                        rootWindow.formatDragGhostText = "Moving " + String(modelData.col || "")
+                                    }
+                                    onPositionChanged: function(mouse) {
+                                        if (!pressed) {
+                                            return
+                                        }
+                                        var p = parent.mapToItem(rootWindow.contentItem, mouse.x, mouse.y)
+                                        rootWindow.formatDragGhostY = p.y - (18 * scaleFactor)
+                                        var pList = parent.mapToItem(formatRowsListView, mouse.x, mouse.y)
+                                        var edge = 18 * scaleFactor
+                                        var speed = 4 * scaleFactor
+                                        if (pList.y < edge) {
+                                            formatRowsListView.contentY = Math.max(0, formatRowsListView.contentY - speed)
+                                        } else if (pList.y > (formatRowsListView.height - edge)) {
+                                            var maxY = Math.max(0, formatRowsListView.contentHeight - formatRowsListView.height)
+                                            formatRowsListView.contentY = Math.min(maxY, formatRowsListView.contentY + speed)
+                                        }
+                                    }
+                                    onReleased: function(mouse) {
+                                        rootWindow.formatDragGhostVisible = false
+                                        var p = parent.mapToItem(rootWindow.contentItem, mouse.x, mouse.y)
+                                        var deltaY = (p.y - dragStartGlobalY) + (formatRowsListView.contentY - dragStartContentY)
+                                        var step = (50 * scaleFactor) + formatRowsListView.spacing
+                                        var shift = Math.round(deltaY / Math.max(1, step))
+                                        if (shift === 0) {
+                                            return
+                                        }
+                                        var targetIndex = Math.max(0, Math.min(formatRowsListView.count - 1, index + shift))
+                                        rootWindow.prepareFormatRowsModelChange(false)
+                                        var movedIndex = backendSafe.moveFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, targetIndex)
+                                        rootWindow.markAndJumpFormatRow(movedIndex)
+                                    }
+                                    onCanceled: {
+                                        rootWindow.formatDragGhostVisible = false
+                                    }
+                                }
+                            }
+
                             PixelTextField {
                                 id: colField
                                 Layout.preferredWidth: 48 * scaleFactor
@@ -1914,11 +2108,12 @@ Window {
                                 Layout.fillWidth: activeFocus
                                 text: modelData.col
                                 placeholderText: ""
-                                visible: !rowExpanded || activeFocus
+                                visible: true
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: activeFocus ? 12 * scaleFactor : 11 * scaleFactor
                                 property bool submittedByEnter: false
+                                property string editStartCol: String(modelData.col || "A")
                                 onTextEdited: {
                                     var hadInvalid = /[^A-Za-z]/.test(text)
                                     var cleaned = text.replace(/[^A-Za-z]/g, "").toUpperCase()
@@ -1932,6 +2127,7 @@ Window {
                                 onActiveFocusChanged: {
                                     if (activeFocus) {
                                         rootWindow.formatEditorFocusType = "column"
+                                        editStartCol = String(modelData.col || "A")
                                         cursorPosition = text.length
                                     }
                                 }
@@ -1945,9 +2141,14 @@ Window {
                                         text = String(modelData.col || "A")
                                         return
                                     }
+                                    if (normalized === editStartCol) {
+                                        text = normalized
+                                        return
+                                    }
                                     rootWindow.prepareFormatRowsModelChange(false)
                                     var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    editStartCol = normalized
                                 }
                                 onAccepted: {
                                     submittedByEnter = true
@@ -1959,9 +2160,15 @@ Window {
                                         rootWindow.formatEditorFocusType = ""
                                         return
                                     }
+                                    if (normalized === editStartCol) {
+                                        focus = false
+                                        rootWindow.formatDesignerSelectedRowIndex = -1
+                                        return
+                                    }
                                     rootWindow.prepareFormatRowsModelChange(false)
                                     var updatedIndex = backendSafe.updateFormatRow(rootWindow.formatDesignerSelectedFormatIndex, index, "col", text)
                                     rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    editStartCol = normalized
                                     focus = false
                                     rootWindow.formatDesignerSelectedRowIndex = -1
                                 }
@@ -1985,7 +2192,7 @@ Window {
                                     var t = (modelData && modelData.type) ? modelData.type : "data"
                                     return t === "formula" ? 1 : (t === "empty" ? 2 : 0)
                                 }
-                                visible: !rowExpanded || activeFocus || (popup && popup.visible)
+                                visible: !rootWindow.formatCompactLabelsMode && (!rowExpanded || activeFocus || (popup && popup.visible))
                                 enabled: !formatCreatePanel.selectedBuiltInFormat
                                 z: (activeFocus || (popup && popup.visible)) ? 3 : 0
                                 property bool sourceEditingActive: activeFocus || (popup && popup.visible)
@@ -2029,8 +2236,8 @@ Window {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 34 * scaleFactor
                                 text: modelData.value
-                                enabled: !formatCreatePanel.selectedBuiltInFormat && modelData.type !== "empty"
-                                visible: !rowExpanded || activeFocus
+                                enabled: !rootWindow.formatCompactLabelsMode && !formatCreatePanel.selectedBuiltInFormat && modelData.type !== "empty"
+                                visible: !rootWindow.formatCompactLabelsMode && (!rowExpanded || activeFocus)
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: 11 * scaleFactor
                                 placeholderText: ""
@@ -2092,6 +2299,7 @@ Window {
                                 border.width: 1
                                 border.color: themeLayer2
                                 visible: !formatCreatePanel.selectedBuiltInFormat
+                                         && !rootWindow.formatCompactLabelsMode
                                          && modelData.type === "data"
                                          && valueField.activeFocus
                                 enabled: backendSafe.xmlPreviewHeaders.length > 0
@@ -2126,6 +2334,7 @@ Window {
                                 border.width: 1
                                 border.color: themeLayer2
                                 visible: !formatCreatePanel.selectedBuiltInFormat
+                                         && !rootWindow.formatCompactLabelsMode
                                          && modelData.type === "formula"
                                          && valueField.activeFocus
 
@@ -2166,6 +2375,130 @@ Window {
                             }
 
                             PixelTextField {
+                                id: labelCustomField
+                                Layout.preferredWidth: rootWindow.formatCompactLabelsMode ? 220 * scaleFactor : 200 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
+                                Layout.fillWidth: rootWindow.formatCompactLabelsMode
+                                text: rootWindow.customLabelTextFromKey(modelData.labelKey)
+                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                visible: rootWindow.formatCompactLabelsMode && rootWindow.customLabelIsCustom(modelData.labelKey)
+                                z: activeFocus ? 3 : 0
+                                font.pixelSize: 10 * scaleFactor
+                                placeholderText: "Custom label"
+                                onVisibleChanged: {
+                                    if (!visible && activeFocus) {
+                                        focus = false
+                                    }
+                                }
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        rootWindow.formatEditorFocusType = "label"
+                                    } else if (rootWindow.formatEditorFocusType === "label") {
+                                        rootWindow.formatEditorFocusType = ""
+                                    }
+                                }
+                                onEditingFinished: {
+                                    var customKey = rootWindow.customLabelKeyFromText(text)
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "labelKey", customKey)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                }
+                                onAccepted: {
+                                    var customKey = rootWindow.customLabelKeyFromText(text)
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "labelKey", customKey)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    focus = false
+                                }
+                            }
+
+                            PixelComboBox {
+                                id: labelPresetCombo
+                                Layout.preferredWidth: rootWindow.formatCompactLabelsMode ? 220 * scaleFactor : 200 * scaleFactor
+                                Layout.preferredHeight: 34 * scaleFactor
+                                Layout.fillWidth: rootWindow.formatCompactLabelsMode || activeFocus || (popup && popup.visible)
+                                textPixelSize: 10 * scaleFactor
+                                popupTextPixelSize: 10 * scaleFactor
+                                skinYScale: 1.2
+                                model: rootWindow.customLabelModel(modelData.type)
+                                currentIndex: rootWindow.customLabelIndexForKey(modelData.labelKey, modelData.type)
+                                visible: rootWindow.formatCompactLabelsMode
+                                         && !rootWindow.customLabelIsCustom(modelData.labelKey)
+                                         && (!rowExpanded || activeFocus || (popup && popup.visible))
+                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                z: (activeFocus || (popup && popup.visible)) ? 3 : 0
+                                onVisibleChanged: {
+                                    if (!visible) {
+                                        if (popup && popup.visible) {
+                                            popup.close()
+                                        }
+                                        if (activeFocus) {
+                                            focus = false
+                                        }
+                                    }
+                                }
+                                fallbackNormal: themeInset
+                                fallbackFocus: themeLayer1
+                                fallbackOpen: themeLayer2
+                                fallbackDisabled: themeLayer2
+                                fallbackBorder: themeLayer2
+                                fallbackText: themeText
+                                fallbackPlaceholder: "white"
+                                fallbackPopup: themePanel
+                                onActiveFocusChanged: {
+                                    if (activeFocus || (popup && popup.visible)) {
+                                        rootWindow.formatEditorFocusType = "label"
+                                    } else if (rootWindow.formatEditorFocusType === "label") {
+                                        rootWindow.formatEditorFocusType = ""
+                                    }
+                                }
+                                onActivated: function(comboIndex) {
+                                    if (formatCreatePanel.selectedFormatIndex < 0 || rowIndex < 0 || comboIndex < 0) {
+                                        return
+                                    }
+                                    var selectedKey = rootWindow.customLabelKeyForIndex(comboIndex, modelData.type)
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "labelKey", selectedKey)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    focus = false
+                                }
+                                Keys.onEscapePressed: function(event) {
+                                    if (popup && popup.visible) {
+                                        popup.close()
+                                    }
+                                    focus = false
+                                    rootWindow.clearFormatCreateEditorFocus()
+                                    event.accepted = true
+                                }
+                            }
+
+                            PixelButton {
+                                sliceLeft: 4
+                                sliceRight: 4
+                                sliceTop: 4
+                                sliceBottom: 4
+                                Layout.preferredWidth: 34 * scaleFactor
+                                Layout.preferredHeight: 32 * scaleFactor
+                                visible: rootWindow.formatCompactLabelsMode
+                                text: "C"
+                                textPixelSize: 10 * scaleFactor
+                                fallbackNormal: themePanel
+                                fallbackHover: themeLayer2
+                                fallbackPressed: themeLayer1
+                                borderColor: themeLayer2
+                                onClicked: {
+                                    rootWindow.prepareFormatRowsModelChange(false)
+                                    var currentlyCustom = rootWindow.customLabelIsCustom(modelData.labelKey)
+                                    var nextKey = currentlyCustom ? "" : "custom:Custom label"
+                                    var updatedIndex = backendSafe.updateFormatRow(formatCreatePanel.selectedFormatIndex, rowIndex, "labelKey", nextKey)
+                                    rootWindow.markAndJumpFormatRow(updatedIndex)
+                                    if (!currentlyCustom && labelCustomField) {
+                                        labelCustomField.forceActiveFocus()
+                                    }
+                                }
+                            }
+
+                            PixelTextField {
                                 id: widthField
                                 Layout.preferredWidth: 64 * scaleFactor
                                 Layout.preferredHeight: 34 * scaleFactor
@@ -2174,8 +2507,8 @@ Window {
                                 placeholderText: ""
                                 inputMethodHints: Qt.ImhDigitsOnly
                                 validator: IntValidator { bottom: 1; top: 200 }
-                                visible: !rowExpanded || activeFocus
-                                enabled: !formatCreatePanel.selectedBuiltInFormat
+                                visible: !rootWindow.formatCompactLabelsMode && (!rowExpanded || activeFocus)
+                                enabled: !rootWindow.formatCompactLabelsMode && !formatCreatePanel.selectedBuiltInFormat
                                 z: activeFocus ? 3 : 0
                                 font.pixelSize: 11 * scaleFactor
                                 property bool submittedByEnter: false
@@ -3145,6 +3478,37 @@ Window {
         scaleFactor: rootWindow.scaleFactor
         themeLayer3: rootWindow.themeLayer3
         onClicked: rootWindow.openConfirmation("headerBack", "Go back to the previous screen?")
+    }
+
+    Item {
+        visible: rootWindow.formatDragGhostVisible
+        z: 500
+        anchors.left: parent.left
+        anchors.right: parent.right
+        y: rootWindow.formatDragGhostY
+        height: 36 * scaleFactor
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.max(140 * scaleFactor, (dragGhostLabel.implicitWidth + (24 * scaleFactor)))
+            height: parent.height
+            radius: 6
+            color: themePanel
+            border.color: themeLayer3
+            border.width: 1
+            opacity: 0.95
+            scale: 1.03
+
+            Text {
+                id: dragGhostLabel
+                anchors.centerIn: parent
+                text: rootWindow.formatDragGhostText
+                color: themeText
+                font.pixelSize: 11 * scaleFactor
+                font.bold: true
+                elide: Text.ElideRight
+            }
+        }
     }
 }
 

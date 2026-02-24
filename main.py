@@ -166,14 +166,34 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
 
         if not is_builtin:
             header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#99CC00', 'font_color': 'white', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
+            formula_header_fmt = workbook.add_format({'num_format': '@', 'bg_color': '#B4C6E7', 'font_color': 'black', 'align': 'center', 'valign': 'vcenter', 'left': 1, 'right': 1})
             generic_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
             formula_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#B4C6E7', 'border': 1, 'align': 'right'})
             generic_highlight_fmt = workbook.add_format({'num_format': 'General', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
             formula_highlight_fmt = workbook.add_format({'num_format': '0.00', 'bg_color': '#FFFF00', 'border': 1, 'align': 'right'})
+            formula_columns = df.attrs.get("formula_columns", [])
+            formula_column_set = set()
+            if isinstance(formula_columns, list):
+                for col_idx in formula_columns:
+                    try:
+                        safe_idx = int(col_idx)
+                    except Exception:
+                        continue
+                    if 0 <= safe_idx < df.shape[1]:
+                        formula_column_set.add(safe_idx)
 
-            for header_row in range(2):
-                for c in range(df.shape[1]):
-                    ws.write(header_row, c, "", header_fmt)
+            header_row_1 = df.attrs.get("custom_header_row_1", [])
+            header_row_2 = df.attrs.get("custom_header_row_2", [])
+            if not isinstance(header_row_1, list):
+                header_row_1 = []
+            if not isinstance(header_row_2, list):
+                header_row_2 = []
+            for c in range(df.shape[1]):
+                fmt = formula_header_fmt if c in formula_column_set else header_fmt
+                text_1 = str(header_row_1[c]) if c < len(header_row_1) and header_row_1[c] is not None else ""
+                text_2 = str(header_row_2[c]) if c < len(header_row_2) and header_row_2[c] is not None else ""
+                ws.write(0, c, text_1, fmt)
+                ws.write(1, c, text_2, fmt)
 
             for r in range(len(df)):
                 excel_r = start_row + r
@@ -372,6 +392,23 @@ class Worker(QObject):
                 self.error.emit(f"An unexpected error occurred for {xml_file}: {e}")
                 self.current_file_index += 1
 
+    def _custom_label_presets(self):
+        return [
+            {"key": "clock", "row1": "0-0:1.0.0", "row2": "Clock"},
+            {"key": "edis_status", "row1": "0-0:96.240.12 [hex]", "row2": "EDIS status"},
+            {"key": "last_avg_demand", "row1": "1-1:1.5.0 [kW]", "row2": "Last average demand +A (QI+QIV)"},
+            {"key": "demand", "row1": "", "row2": "Demand"},
+            {"key": "active_import", "row1": "1-1:1.8.0 [Wh]", "row2": "Active energy import +A (QI+QIV)"},
+            {"key": "kwh", "row1": "", "row2": "kWh"},
+            {"key": "active_export", "row1": "1-1:2.8.0 [Wh]", "row2": "Active energy export -A (QII+QIII)"},
+            {"key": "reactive_import", "row1": "1-1:3.8.0 [varh]", "row2": "Reactive energy import +R (QI+QII)"},
+            {"key": "kvarh", "row1": "", "row2": "kVarh"},
+            {"key": "reactive_export", "row1": "1-1:4.8.0 [varh]", "row2": "Reactive energy export -R (QIII+QIV)"},
+        ]
+
+    def _label_presets_map(self):
+        return {item.get("key", ""): item for item in self._custom_label_presets() if isinstance(item, dict)}
+
 
     def process_custom_from_df(self, df, xml_file):
         try:
@@ -385,15 +422,38 @@ class Worker(QObject):
                 self.error.emit(f"Format '{self.xml_type}' has no columns.")
                 return
 
-            col_indexes = [excel_col_to_index(col.get("col", "")) for col in columns]
-            max_col = (max(col_indexes) + 1) if col_indexes else 1
+            max_col = max(1, len(columns))
+            formula_columns = [
+                idx for idx, col in enumerate(columns)
+                if str(col.get("type", "empty")) == "formula"
+            ]
+            label_map = self._label_presets_map()
+            header_row_1 = [""] * max_col
+            header_row_2 = [""] * max_col
+            clock_preset = label_map.get("clock", {"row1": "0-0:1.0.0", "row2": "Clock"})
+            edis_preset = label_map.get("edis_status", {"row1": "0-0:96.240.12 [hex]", "row2": "EDIS status"})
+            if max_col > 0:
+                header_row_1[0] = str(clock_preset.get("row1", "0-0:1.0.0"))
+                header_row_2[0] = str(clock_preset.get("row2", "Clock"))
+            if max_col > 1:
+                header_row_1[1] = str(edis_preset.get("row1", "0-0:96.240.12 [hex]"))
+                header_row_2[1] = str(edis_preset.get("row2", "EDIS status"))
             final_rows = []
             for i in range(len(df_data)):
                 row = [""] * max_col
                                                                           
                 excel_row_num = i + 3
-                for col_def in columns:
-                    target = excel_col_to_index(col_def.get("col", ""))
+                for target, col_def in enumerate(columns):
+                    if 0 <= target < max_col:
+                        label_key = str(col_def.get("labelKey", "")).strip()
+                        if label_key.startswith("custom:"):
+                            header_row_1[target] = ""
+                            header_row_2[target] = label_key[7:].strip()
+                        else:
+                            preset = label_map.get(label_key)
+                            if preset:
+                                header_row_1[target] = str(preset.get("row1", ""))
+                                header_row_2[target] = str(preset.get("row2", ""))
                     col_type = str(col_def.get("type", "empty"))
                     value = str(col_def.get("value", ""))
                     if col_type == "data":
@@ -401,14 +461,18 @@ class Worker(QObject):
                             source_idx = int(value)
                         except Exception:
                             source_idx = -1
-                        if 0 <= source_idx < df_data.shape[1]:
+                        if 0 <= source_idx < df_data.shape[1] and 0 <= target < max_col:
                             row[target] = df_data.iloc[i, source_idx]
                     elif col_type == "formula":
-                        row[target] = value.replace("{r}", str(excel_row_num)).replace("{r-1}", str(max(1, excel_row_num - 1)))
+                        if 0 <= target < max_col:
+                            row[target] = value.replace("{r}", str(excel_row_num)).replace("{r-1}", str(max(1, excel_row_num - 1)))
                 final_rows.append(row)
 
             final_df = pd.DataFrame(final_rows)
             final_df.attrs["custom_widths"] = [float(col.get("width", 14) or 14) for col in columns]
+            final_df.attrs["formula_columns"] = [i for i in formula_columns if 0 <= i < max_col]
+            final_df.attrs["custom_header_row_1"] = header_row_1
+            final_df.attrs["custom_header_row_2"] = header_row_2
             final_df.attrs["data_start_row"] = 3
             self.progress.emit(90)
             self.dataReady.emit(final_df, self.xml_type, xml_file)
@@ -545,6 +609,8 @@ class SaveWorker(QObject):
             export_dataframe_to_excel(self.df, self.xml_type, self.save_path, self.xml_file)
             self.progress.emit(100)
             self.saved.emit(self.save_path, self.xml_file)
+        except PermissionError as e:
+            self.error.emit(f"PERMISSION_DENIED::{self.save_path}::{e}")
         except Exception as e:
             self.error.emit(f"Failed to save Excel: {e}")
             
@@ -579,7 +645,11 @@ class BatchSaveWorker(QObject):
                     return
                 output = self.batch_outputs[i]
                 save_path = os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))
-                export_dataframe_to_excel(result["df"], result["xml_type"], save_path, result["xml_file"])
+                try:
+                    export_dataframe_to_excel(result["df"], result["xml_type"], save_path, result["xml_file"])
+                except PermissionError as e:
+                    self.error.emit(f"BATCH_PERMISSION_DENIED::{i}::{save_path}::{e}")
+                    return
                 self.batch_outputs[i]["savePath"] = save_path
                 self.batch_outputs[i]["fileName"] = os.path.basename(save_path)
                 self.progress.emit(int(((i + 1) / total) * 100))
@@ -632,6 +702,8 @@ class Backend(QObject):
         self.preview_selected_file = ""
         self._format_edit_snapshot = None
         self._format_edit_active = False
+        self._last_save_payload = None
+        self.custom_label_options = self._custom_label_presets()
         self.settings = QSettings("CubeFlow", "CubeFlow")
         self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
         self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
@@ -651,6 +723,10 @@ class Backend(QObject):
     @pyqtProperty('QVariantList', notify=xmlTypeOptionsChanged)
     def xmlTypeOptions(self):
         return self.xml_type_options
+
+    @pyqtProperty('QVariantList', notify=formatModelChanged)
+    def customLabelOptions(self):
+        return self.custom_label_options
 
     @pyqtProperty(str, notify=formatSavePathChanged)
     def formatSavePath(self):
@@ -691,14 +767,15 @@ class Backend(QObject):
 
     def _default_columns(self, formula):
         return [
-            {"col": "A", "type": "data", "value": "0", "width": 17},
-            {"col": "B", "type": "data", "value": "1", "width": 17},
-            {"col": "C", "type": "data", "value": "2", "width": 14},
-            {"col": "D", "type": "formula", "value": formula, "width": 14},
+            {"col": "A", "type": "data", "value": "0", "width": 17, "labelKey": "clock"},
+            {"col": "B", "type": "data", "value": "1", "width": 17, "labelKey": "edis_status"},
+            {"col": "C", "type": "data", "value": "2", "width": 14, "labelKey": ""},
+            {"col": "D", "type": "formula", "value": formula, "width": 14, "labelKey": ""},
         ]
 
-    def _build_columns_from_spec(self, max_col, mapping, formulas, widths):
+    def _build_columns_from_spec(self, max_col, mapping, formulas, widths, label_keys=None):
         target_to_source = {target: source for source, target in mapping.items()}
+        label_keys = label_keys if isinstance(label_keys, dict) else {}
         columns = []
         for idx in range(max_col):
             if idx in formulas:
@@ -715,9 +792,27 @@ class Backend(QObject):
                 "col": index_to_excel_col(idx),
                 "type": col_type,
                 "value": value,
-                "width": width
+                "width": width,
+                "labelKey": str(label_keys.get(idx, "")),
             })
         return columns
+
+    def _custom_label_presets(self):
+        return [
+            {"key": "clock", "row1": "0-0:1.0.0", "row2": "Clock"},
+            {"key": "edis_status", "row1": "0-0:96.240.12 [hex]", "row2": "EDIS status"},
+            {"key": "last_avg_demand", "row1": "1-1:1.5.0 [kW]", "row2": "Last average demand +A (QI+QIV)"},
+            {"key": "demand", "row1": "", "row2": "Demand"},
+            {"key": "active_import", "row1": "1-1:1.8.0 [Wh]", "row2": "Active energy import +A (QI+QIV)"},
+            {"key": "kwh", "row1": "", "row2": "kWh"},
+            {"key": "active_export", "row1": "1-1:2.8.0 [Wh]", "row2": "Active energy export -A (QII+QIII)"},
+            {"key": "reactive_import", "row1": "1-1:3.8.0 [varh]", "row2": "Reactive energy import +R (QI+QII)"},
+            {"key": "kvarh", "row1": "", "row2": "kVarh"},
+            {"key": "reactive_export", "row1": "1-1:4.8.0 [varh]", "row2": "Reactive energy export -R (QIII+QIV)"},
+        ]
+
+    def _label_presets_map(self):
+        return {item.get("key", ""): item for item in self.custom_label_options if isinstance(item, dict)}
 
     def _default_formats(self):
         den_mapping = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 12}
@@ -725,6 +820,18 @@ class Backend(QObject):
             3: "=C{r}*280",
             5: "=(E{r}-E{r-1})*280/1000",
             8: "=(H{r}-H{r-1})*280/1000",
+        }
+        den_label_keys = {
+            0: "clock",
+            1: "edis_status",
+            2: "last_avg_demand",
+            3: "demand",
+            4: "active_import",
+            5: "kwh",
+            6: "active_export",
+            7: "reactive_import",
+            8: "kvarh",
+            9: "reactive_export",
         }
         den_widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
 
@@ -734,16 +841,29 @@ class Backend(QObject):
             5: "=(E{r}-E{r-1})*1400/1000",
             10: "=(J{r}-J{r-1})*1400/1000",
         }
+        globe_label_keys = {
+            0: "clock",
+            1: "edis_status",
+            2: "last_avg_demand",
+            3: "demand",
+            4: "active_import",
+            5: "kwh",
+            7: "active_export",
+            9: "reactive_import",
+            10: "kvarh",
+            12: "reactive_export",
+        }
         globe_widths = [17.73, 17.27] + [14.91] * 9 + [41.91, 33.27, 43.36, 23.36]
 
         glacier_mapping = den_mapping
         glacier_formulas = den_formulas
+        glacier_label_keys = den_label_keys
         glacier_widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
 
         return [
-            {"name": "Den", "columns": self._build_columns_from_spec(13, den_mapping, den_formulas, den_widths)},
-            {"name": "Glacier", "columns": self._build_columns_from_spec(13, glacier_mapping, glacier_formulas, glacier_widths)},
-            {"name": "Globe", "columns": self._build_columns_from_spec(15, globe_mapping, globe_formulas, globe_widths)},
+            {"name": "Den", "columns": self._build_columns_from_spec(13, den_mapping, den_formulas, den_widths, den_label_keys)},
+            {"name": "Glacier", "columns": self._build_columns_from_spec(13, glacier_mapping, glacier_formulas, glacier_widths, glacier_label_keys)},
+            {"name": "Globe", "columns": self._build_columns_from_spec(15, globe_mapping, globe_formulas, globe_widths, globe_label_keys)},
         ]
 
     def _normalize_loaded_formats(self, raw_formats):
@@ -768,6 +888,7 @@ class Backend(QObject):
                         "type": row_type,
                         "value": self._sanitize_format_value(row_type, col.get("value", "")),
                         "width": self._sanitize_format_width(col.get("width", 14)),
+                        "labelKey": self._sanitize_label_key(col.get("labelKey", ""), row_type),
                     })
             if not columns:
                 columns = self._default_columns("=C{r}*280")
@@ -847,6 +968,21 @@ class Backend(QObject):
             width_value = 14
         return max(1, min(200, width_value))
 
+    def _allowed_label_keys_for_type(self, row_type):
+        safe_type = self._sanitize_format_type(row_type)
+        all_keys = {item.get("key", "") for item in self.custom_label_options if isinstance(item, dict)}
+        if safe_type == "formula":
+            return {"demand", "kwh", "kvarh"}
+        return all_keys
+
+    def _sanitize_label_key(self, value, row_type="data"):
+        key = str(value or "").strip()
+        if key.startswith("custom:"):
+            custom_text = key[7:].strip()
+            return f"custom:{custom_text}" if custom_text else ""
+        valid_keys = self._allowed_label_keys_for_type(row_type)
+        return key if key in valid_keys else ""
+
     def _sort_format_columns(self, columns):
         if not isinstance(columns, list) or not columns:
             return
@@ -908,6 +1044,65 @@ class Backend(QObject):
         if not cleaned:
             cleaned = "format"
         return f"{cleaned}.json"
+
+    def _read_format_name_from_file(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+            if isinstance(data, dict):
+                return str(data.get("name", "")).strip()
+        except Exception:
+            pass
+        return ""
+
+    def _resolve_unique_format_file_path(self, format_name):
+        base_file = self._safe_format_filename(format_name)
+        base_stem, _ = os.path.splitext(base_file)
+        candidate = os.path.join(self.formats_dir, base_file)
+        counter = 2
+        while os.path.exists(candidate):
+            existing_name = self._read_format_name_from_file(candidate)
+            if existing_name and existing_name.lower() == str(format_name).strip().lower():
+                return candidate
+            candidate = os.path.join(self.formats_dir, f"{base_stem} {counter}.json")
+            counter += 1
+        return candidate
+
+    def _find_format_file_paths_by_name(self, name):
+        matches = []
+        target_name = str(name or "").strip().lower()
+        if not target_name:
+            return matches
+        canonical = self._safe_format_filename(name).lower()
+        try:
+            for entry in os.listdir(self.formats_dir):
+                if not entry.lower().endswith(".json"):
+                    continue
+                if entry.lower() == "format_model.json":
+                    continue
+                path = os.path.join(self.formats_dir, entry)
+                if not os.path.isfile(path):
+                    continue
+                if entry.lower() == canonical:
+                    matches.append(path)
+                    continue
+                existing_name = self._read_format_name_from_file(path).lower()
+                if existing_name == target_name:
+                    matches.append(path)
+        except Exception:
+            pass
+        return matches
+
+    def _delete_format_files_for_names(self, names):
+        removed = []
+        unique_paths = set()
+        for name in names:
+            for path in self._find_format_file_paths_by_name(name):
+                unique_paths.add(path)
+        for path in sorted(unique_paths):
+            os.remove(path)
+            removed.append(path)
+        return removed
 
     def _delete_format_file_by_name(self, name):
         file_name = self._safe_format_filename(name)
@@ -1056,8 +1251,7 @@ class Backend(QObject):
         new_index = len(self.format_model) - 1
         try:
             os.makedirs(self.formats_dir, exist_ok=True)
-            file_name = self._safe_format_filename(duplicate_name)
-            target_path = os.path.join(self.formats_dir, file_name)
+            target_path = self._resolve_unique_format_file_path(duplicate_name)
             with open(target_path, "w", encoding="utf-8") as fp:
                 json.dump(self.format_model[new_index], fp, indent=2)
             self._autosave_formats()
@@ -1078,11 +1272,26 @@ class Backend(QObject):
 
     @pyqtSlot(int)
     def duplicateFormatAndOpen(self, index):
-        new_index = self.duplicateFormatDefinition(index)
-        if new_index < 0:
+        if index < 0 or index >= len(self.format_model):
             return
-        self.openFormatForEdit(new_index)
-        return
+        self._format_edit_snapshot = copy.deepcopy(self.format_model)
+        self._format_edit_active = True
+
+        source = self.format_model[index]
+        duplicate_name = self._unique_format_name(f"{source.get('name', 'Format')} Copy")
+        duplicate_columns = copy.deepcopy(source.get("columns", self._default_columns("=C{r}*280")))
+        self.format_model.append({
+            "name": duplicate_name,
+            "columns": duplicate_columns
+        })
+        self.formatModelChanged.emit()
+        self._refresh_xml_type_options()
+
+        new_index = len(self.format_model) - 1
+        if self.root:
+            self.root.setProperty("formatDesignerSelectedFormatIndex", new_index)
+            self.root.setProperty("formatDesignerSelectedRowIndex", -1)
+            self.root.setProperty("processState", "formatCreate")
 
     @pyqtSlot(result=int)
     def createFormatDraft(self):
@@ -1135,30 +1344,49 @@ class Backend(QObject):
     def deleteFormatDefinition(self, index):
         if index < 0 or index >= len(self.format_model):
             return
-        format_name = self.format_model[index].get("name", "")
+        fmt = self.format_model[index]
+        format_name = fmt.get("name", "")
         if self._is_builtin_format_name(format_name):
             self._set_format_designer_status("Failed to delete: Den, Glacier, and Globe are built-in formats.")
             return
-        deleted_file_path = ""
+        alias_names = []
+        raw_aliases = fmt.get("__aliases", [])
+        if isinstance(raw_aliases, list):
+            alias_names = [str(v).strip() for v in raw_aliases if str(v).strip()]
+        names_to_remove = [format_name] + alias_names
+        deleted_paths = []
         try:
             os.makedirs(self.formats_dir, exist_ok=True)
-            deleted_file_path = self._delete_format_file_by_name(format_name)
+            deleted_paths = self._delete_format_files_for_names(names_to_remove)
         except Exception as e:
             self._set_format_designer_status(f"Failed to delete format file: {e}")
+            return
         self.format_model.pop(index)
         if not self.format_model:
             self.format_model = self._default_formats()
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
         self._persist_formats_after_delete()
-        if deleted_file_path:
-            self._set_format_designer_status(f"Deleted format and removed file: {deleted_file_path}")
+        if deleted_paths:
+            self._set_format_designer_status(f"Deleted format and removed {len(deleted_paths)} file(s).")
+        else:
+            self._set_format_designer_status("Deleted format from model. No matching sidecar format file found.")
 
     @pyqtSlot(int, str)
     def renameFormatDefinition(self, index, name):
         if index < 0 or index >= len(self.format_model):
             return
-        self.format_model[index]["name"] = self._unique_format_name(name, skip_index=index)
+        current_name = str(self.format_model[index].get("name", "")).strip()
+        next_name = self._unique_format_name(name, skip_index=index)
+        if current_name and current_name.lower() != next_name.lower():
+            aliases = self.format_model[index].get("__aliases", [])
+            if not isinstance(aliases, list):
+                aliases = []
+            lowered = {str(v).strip().lower() for v in aliases}
+            if current_name.lower() not in lowered:
+                aliases.append(current_name)
+            self.format_model[index]["__aliases"] = aliases
+        self.format_model[index]["name"] = next_name
         self.formatModelChanged.emit()
         self._refresh_xml_type_options()
 
@@ -1172,6 +1400,7 @@ class Backend(QObject):
             "type": "data",
             "value": "",
             "width": 14,
+            "labelKey": "",
         }
         columns.append(new_row)
         self._sort_format_columns(columns)
@@ -1209,10 +1438,13 @@ class Backend(QObject):
         elif field == "type":
             row["type"] = self._sanitize_format_type(value)
             row["value"] = self._sanitize_format_value(row["type"], row.get("value", ""))
+            row["labelKey"] = self._sanitize_label_key(row.get("labelKey", ""), row["type"])
         elif field == "value":
             row["value"] = self._sanitize_format_value(row.get("type", "data"), value)
         elif field == "width":
             row["width"] = self._sanitize_format_width(value)
+        elif field == "labelKey":
+            row["labelKey"] = self._sanitize_label_key(value, row.get("type", "data"))
         updated_index = -1
         for i, candidate in enumerate(columns):
             if candidate is row:
@@ -1222,6 +1454,23 @@ class Backend(QObject):
             updated_index = row_index
         QTimer.singleShot(0, self.formatModelChanged.emit)
         return updated_index
+
+    @pyqtSlot(int, int, int, result=int)
+    def moveFormatRow(self, format_index, from_index, to_index):
+        if format_index < 0 or format_index >= len(self.format_model):
+            return -1
+        columns = self.format_model[format_index]["columns"]
+        if not isinstance(columns, list) or not columns:
+            return -1
+        if from_index < 0 or from_index >= len(columns):
+            return -1
+        safe_to = max(0, min(int(to_index), len(columns) - 1))
+        if from_index == safe_to:
+            return from_index
+        moved = columns.pop(from_index)
+        columns.insert(safe_to, moved)
+        QTimer.singleShot(0, self.formatModelChanged.emit)
+        return safe_to
 
     @pyqtSlot(int, result=bool)
     def loadXmlPreview(self, max_rows=10):
@@ -1325,8 +1574,11 @@ class Backend(QObject):
         try:
             os.makedirs(self.formats_dir, exist_ok=True)
             fmt = self.format_model[format_index]
+            if self._is_builtin_format_name(fmt.get("name", "")):
+                self._set_format_designer_status("Built-in formats are not saved as individual files.")
+                return
             file_name = self._safe_format_filename(fmt.get("name", "format"))
-            target_path = os.path.join(self.formats_dir, file_name)
+            target_path = self._resolve_unique_format_file_path(fmt.get("name", "format"))
             with open(target_path, "w", encoding="utf-8") as fp:
                 json.dump(fmt, fp, indent=2)
             self._autosave_formats()
@@ -1925,6 +2177,9 @@ class Backend(QObject):
         ]
         if not confirm_overwrite_paths(target_paths, "Confirm Batch Overwrite"):
             return
+        self._start_batch_save_thread()
+
+    def _start_batch_save_thread(self):
         if self.root:
             self.root.setProperty("processState", "creating")
         self.progressUpdated.emit(0)
@@ -1943,6 +2198,25 @@ class Backend(QObject):
             if self.root:
                 self.root.setProperty("processState", "batchReview")
             self._stop_thread("batch_save_thread", "batch_save_worker")
+            return
+        if str(msg).startswith("BATCH_PERMISSION_DENIED::"):
+            parts = str(msg).split("::", 3)
+            locked_path = parts[2] if len(parts) > 2 else ""
+            self._stop_thread("batch_save_thread", "batch_save_worker")
+            result = QMessageBox.question(
+                None,
+                "File In Use",
+                "Cannot overwrite because the file is currently open or in use:\n\n"
+                f"{locked_path}\n\n"
+                "Close the file, then click Retry.",
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Retry
+            )
+            if result == QMessageBox.StandardButton.Retry:
+                self._start_batch_save_thread()
+                return
+            if self.root:
+                self.root.setProperty("processState", "batchReview")
             return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
@@ -1987,6 +2261,16 @@ class Backend(QObject):
             self.resetProperties()
             return
 
+        self._last_save_payload = {
+            "df": df,
+            "xml_type": xml_type,
+            "xml_file": xml_file,
+            "save_path": save_path,
+        }
+        self._start_single_save_thread(df, xml_type, save_path, xml_file)
+        self._stop_thread("thread", "worker")
+
+    def _start_single_save_thread(self, df, xml_type, save_path, xml_file):
         self.progressUpdated.emit(90)
         self._stop_thread("save_thread", "save_worker")
         self.save_thread = QThread()
@@ -1997,13 +2281,37 @@ class Backend(QObject):
         self.save_worker.saved.connect(self.handleSaved)
         self.save_thread.started.connect(self.save_worker.save)
         self.save_thread.start()
-        self._stop_thread("thread", "worker")
 
     def handleSaveError(self, msg):
         if msg == "Operation cancelled by user.":
             if self.root:
                 self.root.setProperty("processState", "idle")
             self._stop_thread("save_thread", "save_worker")
+            return
+        if str(msg).startswith("PERMISSION_DENIED::"):
+            parts = str(msg).split("::", 2)
+            locked_path = parts[1] if len(parts) > 1 else ""
+            self._stop_thread("save_thread", "save_worker")
+            result = QMessageBox.question(
+                None,
+                "File In Use",
+                "Cannot overwrite because the file is currently open or in use:\n\n"
+                f"{locked_path}\n\n"
+                "Close the file, then click Retry.",
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Retry
+            )
+            if result == QMessageBox.StandardButton.Retry and self._last_save_payload:
+                payload = self._last_save_payload
+                self._start_single_save_thread(
+                    payload.get("df"),
+                    payload.get("xml_type", ""),
+                    payload.get("save_path", ""),
+                    payload.get("xml_file", "")
+                )
+                return
+            if self.root:
+                self.root.setProperty("processState", "idle")
             return
         QMessageBox.critical(None, "Error", msg)
         if self.root:
@@ -2027,6 +2335,7 @@ class Backend(QObject):
         else:
             if self.root:
                 self.root.setProperty("processState", "complete")
+            self._last_save_payload = None
         self._stop_thread("save_thread", "save_worker")
 
     @pyqtSlot()
