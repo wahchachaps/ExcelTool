@@ -1,4 +1,17 @@
+# Python cache
 __pycache__/
 *.py[cod]
+
+# Local tests folder
 tests/
-tests/
+
+# PyInstaller artifacts
+build/
+dist/
+*.spec
+
+# Installer outputs
+installer/
+
+# Local generated icon (keep source images tracked)
+images/icon.ico
