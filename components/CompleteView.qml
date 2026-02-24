@@ -7,7 +7,9 @@ ColumnLayout {
     property bool isBatch: false
     property int totalBatchFiles: 0
     property string selectionType: ""
+    property string completionDetailMessage: ""
     property color themeText: "white"
+    property color themeTextSecondary: "#b8b8c4"
     property color themeLayer3: "#7d7d8a"
     property color themeLayer2: "#6b6b7a"
     property color themeLayer1: "#52525e"
@@ -37,6 +39,17 @@ ColumnLayout {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         color: themeText
+    }
+
+    Text {
+        visible: String(completionDetailMessage || "").length > 0
+        text: completionDetailMessage
+        font.pixelSize: 12 * scaleFactor
+        Layout.alignment: Qt.AlignHCenter
+        Layout.fillWidth: true
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.Wrap
+        color: themeTextSecondary
     }
 
     PixelButton {

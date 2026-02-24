@@ -14,6 +14,7 @@ ComboBox {
     property color fallbackPopup: "#3d3d4d"
     property real textPixelSize: 12
     property real popupTextPixelSize: 11
+    property real popupMaxHeight: 220
     property int textLeftInset: 20
     property int textRightInset: 12
     property int sliceLeft: 4
@@ -111,9 +112,12 @@ ComboBox {
         y: root.height - 1
         width: root.width
         padding: 1
+        height: Math.min(contentItem.implicitHeight + (padding * 2), root.popupMaxHeight)
         contentItem: ListView {
             clip: true
             implicitHeight: contentHeight
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
             model: root.popup.visible ? root.delegateModel : null
             currentIndex: root.highlightedIndex
             ScrollIndicator.vertical: ScrollIndicator {}
