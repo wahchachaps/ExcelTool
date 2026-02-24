@@ -63,6 +63,7 @@ Window {
     property bool isBatch: false
     property int currentBatchIndex: 0
     property int totalBatchFiles: 0
+    property int currentBatchSaveCount: 0
     property string currentFileName: ""
     property var batchOutputs: []
     property var batchFileNameDrafts: ({})
@@ -84,8 +85,12 @@ Window {
     property int formatRowsHighlightIndex: -1
     property int batchRowHighlightIndex: -1
     property string confirmAction: ""
+    property string confirmTitle: "Confirm"
     property string confirmMessage: ""
+    property int confirmRequestToken: -1
     property int pendingDeleteFormatIndex: -1
+    property string infoMessage: ""
+    property string completionDetailMessage: ""
     property bool previewSelectMode: false
     property int previewSelectFormatIndex: -1
     property int previewSelectRowIndex: -1
@@ -133,6 +138,7 @@ Window {
         function commitFormatEdit() {}
         function cancelFormatEdit() {}
         function confirmDiscardFormatEdit() { return false }
+        function resolveInAppConfirm(_token, _accepted) {}
         function applyBatchOutputDirectoryToAll(_p) {}
         function browseBatchOutputDirectoryForAll() {}
         function updateBatchOutputFileName(_i, _n) {}
@@ -395,9 +401,24 @@ Window {
     }
 
     function openConfirmation(actionId, messageText) {
+        confirmRequestToken = -1
+        confirmTitle = "Confirm"
         confirmAction = String(actionId || "")
         confirmMessage = String(messageText || "Are you sure?")
         confirmDialog.open()
+    }
+
+    function openBackendConfirmation(tokenValue, titleText, messageText) {
+        confirmAction = ""
+        confirmRequestToken = tokenValue
+        confirmTitle = String(titleText || "Confirm")
+        confirmMessage = String(messageText || "Are you sure?")
+        confirmDialog.open()
+    }
+
+    function openInfoDialog(messageText) {
+        infoMessage = String(messageText || "")
+        infoDialog.open()
     }
 
     function runConfirmedAction() {
@@ -423,6 +444,7 @@ Window {
         }
         pendingDeleteFormatIndex = -1
         confirmAction = ""
+        confirmRequestToken = -1
     }
 
     function scrollConvertingStatusListToBottom() {
@@ -863,6 +885,12 @@ Window {
         padding: 0
         z: 350
         background: Item {}
+        onClosed: {
+            if (rootWindow.confirmRequestToken >= 0) {
+                backendSafe.resolveInAppConfirm(rootWindow.confirmRequestToken, false)
+                rootWindow.confirmRequestToken = -1
+            }
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -877,7 +905,7 @@ Window {
                 spacing: 12 * scaleFactor
 
                 Text {
-                    text: "Confirm"
+                    text: rootWindow.confirmTitle
                     color: themeText
                     font.family: appFontFamily
                     font.pixelSize: 14 * scaleFactor
@@ -914,7 +942,13 @@ Window {
                         fallbackPressed: themeLayer1
                         textColor: themeText
                         borderColor: themeLayer3
-                        onClicked: confirmDialog.close()
+                        onClicked: {
+                            if (rootWindow.confirmRequestToken >= 0) {
+                                backendSafe.resolveInAppConfirm(rootWindow.confirmRequestToken, false)
+                                rootWindow.confirmRequestToken = -1
+                            }
+                            confirmDialog.close()
+                        }
                     }
 
                     PixelButton {
@@ -931,7 +965,15 @@ Window {
                         fallbackPressed: themeLayer1
                         textColor: themeText
                         borderColor: themeLayer3
-                        onClicked: rootWindow.runConfirmedAction()
+                        onClicked: {
+                            if (rootWindow.confirmRequestToken >= 0) {
+                                backendSafe.resolveInAppConfirm(rootWindow.confirmRequestToken, true)
+                                rootWindow.confirmRequestToken = -1
+                                confirmDialog.close()
+                            } else {
+                                rootWindow.runConfirmedAction()
+                            }
+                        }
                     }
                 }
             }
@@ -2429,6 +2471,7 @@ Window {
                                 Layout.fillWidth: rootWindow.formatCompactLabelsMode || activeFocus || (popup && popup.visible)
                                 textPixelSize: 10 * scaleFactor
                                 popupTextPixelSize: 10 * scaleFactor
+                                popupMaxHeight: 220 * scaleFactor
                                 skinYScale: 1.2
                                 model: rootWindow.customLabelModel(modelData.type)
                                 currentIndex: rootWindow.customLabelIndexForKey(modelData.labelKey, modelData.type)
@@ -2935,8 +2978,8 @@ Window {
             Text {
                 visible: isBatch && totalBatchFiles > 0 && batchOutputs.length > 0
                 text: {
-                    var saveIndex = Math.max(1, Math.min(totalBatchFiles, Math.ceil((progress / 100.0) * totalBatchFiles)))
-                    var fileIdx = Math.max(0, Math.min(batchOutputs.length - 1, saveIndex - 1))
+                    var nextIndex = Math.max(0, Math.min(totalBatchFiles - 1, currentBatchSaveCount))
+                    var fileIdx = Math.max(0, Math.min(batchOutputs.length - 1, nextIndex))
                     var fileName = batchOutputs[fileIdx] && batchOutputs[fileIdx].sourceFile ? batchOutputs[fileIdx].sourceFile : ""
                     return "Saving: " + fileName
                 }
@@ -2952,8 +2995,8 @@ Window {
             Text {
                 visible: isBatch && totalBatchFiles > 0
                 text: {
-                    var saveIndex = Math.max(1, Math.min(totalBatchFiles, Math.ceil((progress / 100.0) * totalBatchFiles)))
-                    return "(" + saveIndex + " of " + totalBatchFiles + ")"
+                    var savedCount = Math.max(0, Math.min(totalBatchFiles, currentBatchSaveCount))
+                    return "(" + savedCount + " of " + totalBatchFiles + ")"
                 }
                 font.pixelSize: 12 * scaleFactor
                 color: themeTextSecondary
@@ -3454,7 +3497,9 @@ Window {
             isBatch: rootWindow.isBatch
             totalBatchFiles: rootWindow.totalBatchFiles
             selectionType: rootWindow.selectionType
+            completionDetailMessage: rootWindow.completionDetailMessage
             themeText: rootWindow.themeText
+            themeTextSecondary: rootWindow.themeTextSecondary
             themeLayer3: rootWindow.themeLayer3
             themeLayer2: rootWindow.themeLayer2
             themeLayer1: rootWindow.themeLayer1
@@ -3517,6 +3562,84 @@ Window {
                 font.bold: true
                 elide: Text.ElideRight
             }
+        }
+    }
+
+    Popup {
+        id: infoDialog
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        anchors.centerIn: parent
+        width: Math.min(rootWindow.width - (32 * scaleFactor), 340 * scaleFactor)
+        height: 150 * scaleFactor
+        padding: 0
+        z: 351
+        background: Item {}
+
+        Rectangle {
+            anchors.fill: parent
+            color: themePanel
+            border.color: themeLayer2
+            border.width: 1
+            radius: 6
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12 * scaleFactor
+                spacing: 12 * scaleFactor
+
+                Text {
+                    text: "Notice"
+                    color: themeText
+                    font.family: appFontFamily
+                    font.pixelSize: 14 * scaleFactor
+                    font.bold: true
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Text {
+                    text: rootWindow.infoMessage
+                    color: themeText
+                    font.family: appFontFamily
+                    font.pixelSize: 11 * scaleFactor
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                PixelButton {
+                    sliceLeft: 5
+                    sliceRight: 5
+                    sliceTop: 4
+                    sliceBottom: 4
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 36 * scaleFactor
+                    text: "OK"
+                    textPixelSize: 11 * scaleFactor
+                    fallbackNormal: themeLayer3
+                    fallbackHover: themeLayer2
+                    fallbackPressed: themeLayer1
+                    textColor: themeText
+                    borderColor: themeLayer3
+                    onClicked: infoDialog.close()
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: backendSafe
+        ignoreUnknownSignals: true
+        function onFormatImportNotice(message) {
+            rootWindow.openInfoDialog(message)
+        }
+        function onInAppNotice(message) {
+            rootWindow.openInfoDialog(message)
+        }
+        function onInAppConfirmRequested(token, title, message) {
+            rootWindow.openBackendConfirmation(token, title, message)
         }
     }
 }

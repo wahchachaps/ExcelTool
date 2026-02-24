@@ -4,7 +4,7 @@ import json
 import copy
 import tempfile
 import pandas as pd
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings, QTimer, QStandardPaths
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtProperty, QUrl, pyqtSignal, QThread, Qt, QSettings, QTimer, QStandardPaths, QEventLoop
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtGui import QIcon, QFontDatabase, QFont
@@ -169,27 +169,6 @@ def collect_xml_files_from_paths(paths, should_stop=None):
                     collected.append(full_path)
                     seen.add(full_path)
     return collected
-
-
-def confirm_overwrite_paths(paths, title="Confirm Overwrite"):
-    existing = [p for p in paths if os.path.exists(p)]
-    if not existing:
-        return True
-    preview = "\n".join(existing[:8])
-    suffix = "" if len(existing) <= 8 else f"\n...and {len(existing) - 8} more file(s)"
-    msg = (
-        "The following file(s) already exist:\n\n"
-        f"{preview}{suffix}\n\n"
-        "Do you want to overwrite them?"
-    )
-    result = QMessageBox.question(
-        None,
-        title,
-        msg,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No
-    )
-    return result == QMessageBox.StandardButton.Yes
 
 
 def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
@@ -440,10 +419,17 @@ class Worker(QObject):
             {"key": "demand", "row1": "", "row2": "Demand"},
             {"key": "active_import", "row1": "1-1:1.8.0 [Wh]", "row2": "Active energy import +A (QI+QIV)"},
             {"key": "kwh", "row1": "", "row2": "kWh"},
+            {"key": "active_energy_rate1", "row1": "1-1:15.8.1 [Wh]", "row2": "Active energy A (QI+QII+QIII+QIV) rate 1"},
+            {"key": "energy_delta_import", "row1": "1-1:1.29.0 [Wh]", "row2": "Energy delta over capture period 1 +A (QI+QIV)"},
             {"key": "active_export", "row1": "1-1:2.8.0 [Wh]", "row2": "Active energy export -A (QII+QIII)"},
+            {"key": "energy_delta_export", "row1": "1-1:2.29.0 [Wh]", "row2": "Energy delta over capture period 1 -A (QII+QIII)"},
             {"key": "reactive_import", "row1": "1-1:3.8.0 [varh]", "row2": "Reactive energy import +R (QI+QII)"},
             {"key": "kvarh", "row1": "", "row2": "kVarh"},
+            {"key": "energy_delta_reactive_import", "row1": "1-1:3.29.0 [varh]", "row2": "Energy delta over capture period 1 +R (QI+QII)"},
             {"key": "reactive_export", "row1": "1-1:4.8.0 [varh]", "row2": "Reactive energy export -R (QIII+QIV)"},
+            {"key": "energy_delta_reactive_export", "row1": "1-1:4.29.0 [varh]", "row2": "Energy delta over capture period 1 -R (QIII+QIV)"},
+            {"key": "last_avg_power_factor", "row1": "1-1:13.5.0", "row2": "Last average power factor"},
+            {"key": "energy_abs_sum", "row1": "1-1:128.8.0 [Wh]", "row2": "Energy |AL1|+|AL2|+|AL3|"},
         ]
 
     def _label_presets_map(self):
@@ -652,6 +638,7 @@ class BatchSaveWorker(QObject):
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)
+    saveCountUpdated = pyqtSignal(int)
 
     def __init__(self, batch_results, batch_outputs):
         super().__init__()
@@ -684,6 +671,7 @@ class BatchSaveWorker(QObject):
                     return
                 self.batch_outputs[i]["savePath"] = save_path
                 self.batch_outputs[i]["fileName"] = os.path.basename(save_path)
+                self.saveCountUpdated.emit(i + 1)
                 self.progress.emit(int(((i + 1) / total) * 100))
 
             self.finished.emit(self.batch_outputs)
@@ -698,6 +686,9 @@ class Backend(QObject):
     xmlTypeOptionsChanged = pyqtSignal()
     formatSavePathChanged = pyqtSignal()
     xmlPreviewChanged = pyqtSignal()
+    formatImportNotice = pyqtSignal(str)
+    inAppConfirmRequested = pyqtSignal(int, str, str)
+    inAppNotice = pyqtSignal(str)
 
     def __init__(self, engine):
         super().__init__()
@@ -736,6 +727,9 @@ class Backend(QObject):
         self._format_edit_snapshot = None
         self._format_edit_active = False
         self._last_save_payload = None
+        self._confirm_token = 0
+        self._confirm_response = False
+        self._confirm_loop = None
         self.settings = QSettings("CubeFlow", "CubeFlow")
         self.last_open_dir = str(self.settings.value("lastOpenDir", "", str))
         self.last_save_dir = str(self.settings.value("lastSaveDir", "", str))
@@ -840,10 +834,17 @@ class Backend(QObject):
             {"key": "demand", "row1": "", "row2": "Demand"},
             {"key": "active_import", "row1": "1-1:1.8.0 [Wh]", "row2": "Active energy import +A (QI+QIV)"},
             {"key": "kwh", "row1": "", "row2": "kWh"},
+            {"key": "active_energy_rate1", "row1": "1-1:15.8.1 [Wh]", "row2": "Active energy A (QI+QII+QIII+QIV) rate 1"},
+            {"key": "energy_delta_import", "row1": "1-1:1.29.0 [Wh]", "row2": "Energy delta over capture period 1 +A (QI+QIV)"},
             {"key": "active_export", "row1": "1-1:2.8.0 [Wh]", "row2": "Active energy export -A (QII+QIII)"},
+            {"key": "energy_delta_export", "row1": "1-1:2.29.0 [Wh]", "row2": "Energy delta over capture period 1 -A (QII+QIII)"},
             {"key": "reactive_import", "row1": "1-1:3.8.0 [varh]", "row2": "Reactive energy import +R (QI+QII)"},
             {"key": "kvarh", "row1": "", "row2": "kVarh"},
+            {"key": "energy_delta_reactive_import", "row1": "1-1:3.29.0 [varh]", "row2": "Energy delta over capture period 1 +R (QI+QII)"},
             {"key": "reactive_export", "row1": "1-1:4.8.0 [varh]", "row2": "Reactive energy export -R (QIII+QIV)"},
+            {"key": "energy_delta_reactive_export", "row1": "1-1:4.29.0 [varh]", "row2": "Energy delta over capture period 1 -R (QIII+QIV)"},
+            {"key": "last_avg_power_factor", "row1": "1-1:13.5.0", "row2": "Last average power factor"},
+            {"key": "energy_abs_sum", "row1": "1-1:128.8.0 [Wh]", "row2": "Energy |AL1|+|AL2|+|AL3|"},
         ]
 
     def _label_presets_map(self):
@@ -867,6 +868,9 @@ class Backend(QObject):
             7: "reactive_import",
             8: "kvarh",
             9: "reactive_export",
+            10: "active_energy_rate1",
+            11: "last_avg_power_factor",
+            12: "energy_abs_sum",
         }
         den_widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
 
@@ -883,10 +887,15 @@ class Backend(QObject):
             3: "demand",
             4: "active_import",
             5: "kwh",
+            6: "energy_delta_import",
             7: "active_export",
+            8: "energy_delta_export",
             9: "reactive_import",
             10: "kvarh",
+            11: "energy_delta_reactive_import",
             12: "reactive_export",
+            13: "energy_delta_reactive_export",
+            14: "last_avg_power_factor",
         }
         globe_widths = [17.73, 17.27] + [14.91] * 9 + [41.91, 33.27, 43.36, 23.36]
 
@@ -900,6 +909,34 @@ class Backend(QObject):
             {"name": "Glacier", "columns": self._build_columns_from_spec(13, glacier_mapping, glacier_formulas, glacier_widths, glacier_label_keys)},
             {"name": "Globe", "columns": self._build_columns_from_spec(15, globe_mapping, globe_formulas, globe_widths, globe_label_keys)},
         ]
+
+    def _builtin_default_columns_map(self):
+        mapping = {}
+        for fmt in self._default_formats():
+            name = str(fmt.get("name", "")).strip().lower()
+            cols = fmt.get("columns", [])
+            if name and isinstance(cols, list):
+                mapping[name] = cols
+        return mapping
+
+    def _apply_builtin_label_defaults(self, name, columns):
+        if not isinstance(columns, list):
+            return columns
+        default_map = self._builtin_default_columns_map()
+        builtin_cols = default_map.get(str(name or "").strip().lower())
+        if not isinstance(builtin_cols, list):
+            return columns
+        for i, col in enumerate(columns):
+            if not isinstance(col, dict):
+                continue
+            existing = str(col.get("labelKey", "")).strip()
+            if existing:
+                continue
+            if i < len(builtin_cols) and isinstance(builtin_cols[i], dict):
+                default_key = str(builtin_cols[i].get("labelKey", "")).strip()
+                if default_key:
+                    col["labelKey"] = default_key
+        return columns
 
     def _normalize_loaded_formats(self, raw_formats):
         normalized = []
@@ -929,6 +966,7 @@ class Backend(QObject):
                     })
             if not columns:
                 columns = self._default_columns("=C{r}*280")
+            columns = self._apply_builtin_label_defaults(name, columns)
             normalized.append({"name": name, "columns": columns})
         return normalized
 
@@ -1359,6 +1397,51 @@ class Backend(QObject):
         self._stop_thread("batch_save_thread", "batch_save_worker", timeout_ms)
         self._stop_thread("path_scan_thread", "path_scan_worker", timeout_ms)
 
+    def _confirm_in_app(self, title, message):
+        if not self.root:
+            result = QMessageBox.question(
+                None,
+                str(title or "Confirm"),
+                str(message or "Are you sure?"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            return result == QMessageBox.StandardButton.Yes
+        self._confirm_token += 1
+        token = self._confirm_token
+        self._confirm_response = False
+        self.inAppConfirmRequested.emit(token, str(title or "Confirm"), str(message or "Are you sure?"))
+        loop = QEventLoop()
+        self._confirm_loop = loop
+        loop.exec()
+        self._confirm_loop = None
+        return bool(self._confirm_response)
+
+    def _confirm_overwrite_paths(self, paths, title="Confirm Overwrite"):
+        existing = [p for p in paths if os.path.exists(p)]
+        if not existing:
+            return True
+        preview = "\n".join(existing[:8])
+        suffix = "" if len(existing) <= 8 else f"\n...and {len(existing) - 8} more file(s)"
+        msg = (
+            "The following file(s) already exist:\n\n"
+            f"{preview}{suffix}\n\n"
+            "Do you want to overwrite them?"
+        )
+        return self._confirm_in_app(title, msg)
+
+    @pyqtSlot(int, bool)
+    def resolveInAppConfirm(self, token, accepted):
+        try:
+            token_value = int(token)
+        except Exception:
+            return
+        if token_value != self._confirm_token:
+            return
+        self._confirm_response = bool(accepted)
+        if self._confirm_loop is not None and self._confirm_loop.isRunning():
+            self._confirm_loop.quit()
+
     def applyRememberedSettingsToUI(self):
         if not self.root:
             return
@@ -1416,22 +1499,61 @@ class Backend(QObject):
                 return
 
             added = 0
+            skipped = 0
+            copied = 0
+            copy_errors = 0
+            existing_names = {str(item.get("name", "")).strip().lower() for item in self.format_model if isinstance(item, dict)}
             for fmt in parsed:
-                name = self._unique_format_name(fmt.get("name", "New Format"))
-                self.format_model.append({
+                incoming_name = str(fmt.get("name", "New Format")).strip()
+                if not incoming_name:
+                    incoming_name = "New Format"
+                if incoming_name.lower() in existing_names:
+                    skipped += 1
+                    continue
+                name = incoming_name
+                imported_fmt = {
                     "name": name,
                     "columns": fmt.get("columns", self._default_columns("=C{r}*280"))
-                })
+                }
+                self.format_model.append(imported_fmt)
+                existing_names.add(name.lower())
                 added += 1
+                try:
+                    os.makedirs(self.formats_dir, exist_ok=True)
+                    target_path = self._resolve_unique_format_file_path(name)
+                    self._prepare_file_for_write(target_path)
+                    with open(target_path, "w", encoding="utf-8") as fp:
+                        json.dump(imported_fmt, fp, indent=2)
+                    copied += 1
+                except Exception:
+                    copy_errors += 1
 
             self.format_save_path = self.formats_path
             self.settings.setValue("formatSavePath", self.formats_path)
             self.formatSavePathChanged.emit()
-            self.formatModelChanged.emit()
-            self._refresh_xml_type_options()
-            self._autosave_formats()
-            self._set_format_designer_status(f"Imported {added} format(s) from {chosen_path}")
-            QMessageBox.information(None, "Formats Imported", f"Imported {added} format(s) from:\n{chosen_path}")
+            if added > 0:
+                self.formatModelChanged.emit()
+                self._refresh_xml_type_options()
+                self._autosave_formats()
+            if added > 0 and (skipped > 0 or copy_errors > 0):
+                self._set_format_designer_status(
+                    f"Imported {added} format(s). Skipped {skipped} duplicate format(s). "
+                    f"Copied {copied} file(s){', copy failed for ' + str(copy_errors) if copy_errors > 0 else ''}."
+                )
+                notice = (
+                    f"Imported {added} format(s).\n"
+                    f"Copied {copied} file(s) to formats folder."
+                )
+                if skipped > 0:
+                    notice += f"\nSkipped {skipped} because they are already in the list."
+                if copy_errors > 0:
+                    notice += f"\nFailed to copy {copy_errors} file(s)."
+                self.formatImportNotice.emit(notice)
+            elif added > 0:
+                self._set_format_designer_status(f"Imported {added} format(s) from {chosen_path}. Copied {copied} file(s) to formats folder.")
+            else:
+                self._set_format_designer_status("No formats imported. Selected file already exists in the list.")
+                self.formatImportNotice.emit("This format is already in the list.")
         except Exception as e:
             self._set_format_designer_status(f"Failed to import format file: {e}")
             QMessageBox.critical(None, "Import Failed", f"Failed to import format file:\n{e}")
@@ -1538,14 +1660,10 @@ class Backend(QObject):
     def confirmDiscardFormatEdit(self):
         if not self._format_edit_active:
             return True
-        result = QMessageBox.question(
-            None,
+        return self._confirm_in_app(
             "Discard Changes",
-            "Unsaved format changes will not be saved.\n\nGo back to list anyway?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            "Unsaved format changes will not be saved.\n\nGo back to list anyway?"
         )
-        return result == QMessageBox.StandardButton.Yes
 
     @pyqtSlot()
     def commitFormatEdit(self):
@@ -2395,23 +2513,30 @@ class Backend(QObject):
             os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))
             for output in self.batch_outputs
         ]
-        if not confirm_overwrite_paths(target_paths, "Confirm Batch Overwrite"):
+        if not self._confirm_overwrite_paths(target_paths, "Confirm Batch Overwrite"):
             return
         self._start_batch_save_thread()
 
     def _start_batch_save_thread(self):
         if self.root:
             self.root.setProperty("processState", "creating")
+            self.root.setProperty("currentBatchSaveCount", 0)
         self.progressUpdated.emit(0)
         self._stop_thread("batch_save_thread", "batch_save_worker")
         self.batch_save_thread = QThread()
         self.batch_save_worker = BatchSaveWorker(self.batch_results, self.batch_outputs)
         self.batch_save_worker.moveToThread(self.batch_save_thread)
         self.batch_save_worker.progress.connect(self.progressUpdated)
+        self.batch_save_worker.saveCountUpdated.connect(self.handleBatchSaveCountUpdated)
         self.batch_save_worker.error.connect(self.handleBatchSaveError)
         self.batch_save_worker.finished.connect(self.handleBatchSaveFinished)
         self.batch_save_thread.started.connect(self.batch_save_worker.save_all)
         self.batch_save_thread.start()
+
+    @pyqtSlot(int)
+    def handleBatchSaveCountUpdated(self, count):
+        if self.root:
+            self.root.setProperty("currentBatchSaveCount", count)
 
     def handleBatchSaveError(self, msg):
         if msg == "Operation cancelled by user.":
@@ -2423,16 +2548,13 @@ class Backend(QObject):
             parts = str(msg).split("::", 3)
             locked_path = parts[2] if len(parts) > 2 else ""
             self._stop_thread("batch_save_thread", "batch_save_worker")
-            result = QMessageBox.question(
-                None,
+            should_retry = self._confirm_in_app(
                 "File In Use",
                 "Cannot overwrite because the file is currently open or in use:\n\n"
                 f"{locked_path}\n\n"
-                "Close the file, then click Retry.",
-                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Retry
+                "Close the file, then click Yes to retry."
             )
-            if result == QMessageBox.StandardButton.Retry:
+            if should_retry:
                 self._start_batch_save_thread()
                 return
             if self.root:
@@ -2454,8 +2576,9 @@ class Backend(QObject):
         self.refreshBatchOutputsProperty()
         self.progressUpdated.emit(100)
         if self.root:
+            self.root.setProperty("currentBatchSaveCount", len(self.batch_outputs))
+            self.root.setProperty("completionDetailMessage", f"Processed Excel saved: {len(self.batch_outputs)} file(s).")
             self.root.setProperty("processState", "complete")
-        QMessageBox.information(None, "Done", f"Saved {len(self.batch_outputs)} files successfully.")
         self._stop_thread("batch_save_thread", "batch_save_worker")
 
     @pyqtSlot(object,str,str)
@@ -2476,7 +2599,7 @@ class Backend(QObject):
             self.resetProperties()
             return
         self.rememberSaveDirectory(os.path.dirname(save_path), batch=False)
-        if not confirm_overwrite_paths([save_path], "Confirm Overwrite"):
+        if not self._confirm_overwrite_paths([save_path], "Confirm Overwrite"):
             self._stop_thread("thread", "worker")
             self.resetProperties()
             return
@@ -2512,16 +2635,13 @@ class Backend(QObject):
             parts = str(msg).split("::", 2)
             locked_path = parts[1] if len(parts) > 1 else ""
             self._stop_thread("save_thread", "save_worker")
-            result = QMessageBox.question(
-                None,
+            should_retry = self._confirm_in_app(
                 "File In Use",
                 "Cannot overwrite because the file is currently open or in use:\n\n"
                 f"{locked_path}\n\n"
-                "Close the file, then click Retry.",
-                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Retry
+                "Close the file, then click Yes to retry."
             )
-            if result == QMessageBox.StandardButton.Retry and self._last_save_payload:
+            if should_retry and self._last_save_payload:
                 payload = self._last_save_payload
                 self._start_single_save_thread(
                     payload.get("df"),
@@ -2546,7 +2666,8 @@ class Backend(QObject):
             self._stop_thread("save_thread", "save_worker")
             return
         self.progressUpdated.emit(100)
-        QMessageBox.information(None, "Done", f"Processed Excel saved:\n{save_path}")
+        if self.root:
+            self.root.setProperty("completionDetailMessage", f"Processed Excel saved: {save_path}")
         self.current_batch_index += 1
         if self.root:
             self.root.setProperty("currentBatchIndex", self.current_batch_index)
@@ -2585,6 +2706,7 @@ class Backend(QObject):
             self.root.setProperty("selectedFile","")
             self.root.setProperty("selectedFiles", [])
             self.root.setProperty("selectionType","")
+            self.root.setProperty("completionDetailMessage", "")
             self.root.setProperty("fileSize","")
             self.root.setProperty("progress",0)
             self.root.setProperty("isBatch", False)
@@ -2593,6 +2715,7 @@ class Backend(QObject):
             self.root.setProperty("currentFileName", "")
             self.root.setProperty("batchOutputs", [])
             self.root.setProperty("batchFileStatuses", [])
+            self.root.setProperty("currentBatchSaveCount", 0)
         self.selected_file = None
         self.selected_files = []
         self.batch_file_statuses = []
