@@ -1,0 +1,81 @@
+@font-face {
+    font-family:"hPixelFont" ;
+    src: url("./fonts/04B_30__.TTF");
+}
+@font-face {
+    font-family: "PixelFont";
+    src: url("./fonts/Minecraft.ttf");
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "PixelFont";
+    background-color: #322b38;
+}
+.header {
+    display:flex;
+    align-items: center;
+    gap: 10px;
+
+    background-image: url("./imgs/header_bg.png");
+    background-size: 101% 101%;
+    background-repeat: no-repeat;
+    background-position: center;
+
+    height: 15vh;
+    width: 100%;
+}
+.header-icon { 
+    margin-left: 1rem;
+    margin-right: 1rem;
+    width: 90%;
+    max-width: 60px;
+    height: auto;
+}
+h1 {
+    margin: 0;
+    color: white;;
+    font-size: clamp(16px, 4.5vw, 32px);
+    font-family: "hPixelFont";
+}
+h2 {
+    padding-top: 10px;
+    margin: 0;
+    color: white;;
+    font-size: 1rem;
+    font-family: "PixelFont";
+}
+h3{
+    margin: 0;
+    color: white;;
+    font-size: 1rem;
+    font-family: "PixelFont";
+}
+.h-button{
+    position: absolute;
+    display: flex;
+    outline:none;
+    border: none;  
+    
+    top: 20px;
+    right: 50px;
+    width: 8rem;
+    height: 8%;
+    max-height: 70px;
+    padding: 10px 20px;
+
+    cursor: pointer;
+    justify-content: center;
+    align-content: center;
+
+    background:transparent;
+    background-image: url("./imgs/header_button_normal.png");
+    background-size: 100% 100%;
+}
+.h-button:hover {
+    background-image: url("./imgs/header_button_hovered.png");
+}
+.h-button:active {
+    background-image: url("./imgs/header_button_active.png");
+}
