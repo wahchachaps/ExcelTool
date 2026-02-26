@@ -1,4 +1,4 @@
-# ExcelTool
+# CubeFlow
 
 Desktop XML-to-Excel converter built with PyQt6 + QML, focused on fast single and batch conversion workflows.
 
