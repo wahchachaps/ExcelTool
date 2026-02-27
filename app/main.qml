@@ -112,6 +112,7 @@ Window {
         function validateOutputDirectory(_path) { return "" }
         function estimateBatchOutputConflicts(_outputs) { return [] }
         function getFileSize(_path) { return "" }
+        function isBuiltinFormat(_name) { return false }
 
         function setFormatRowFromPreview(_a, _b, _c) { return -1 }
         function updateFormatRow(_a, _b, _c, _d) { return -1 }
@@ -1651,7 +1652,7 @@ Window {
                         width: ListView.view.width
                         height: 44 * scaleFactor
                         radius: 5
-                        property bool isBuiltInFormat: (modelData.name === "Den" || modelData.name === "Glacier" || modelData.name === "Globe")
+                        property bool isBuiltInFormat: backendSafe.isBuiltinFormat(modelData.name)
                         color: rootWindow.formatDesignerSelectedFormatIndex === index ? themeLayer1 : themePanel
                         border.color: rootWindow.formatDesignerSelectedFormatIndex === index ? themeLayer3 : themeLayer2
                         border.width: 1
@@ -1779,9 +1780,7 @@ Window {
                 backendSafe.formatModel.length > 0
                 && selectedFormatIndex >= 0
                 && selectedFormatIndex < backendSafe.formatModel.length
-                && (backendSafe.formatModel[selectedFormatIndex].name === "Den"
-                    || backendSafe.formatModel[selectedFormatIndex].name === "Glacier"
-                    || backendSafe.formatModel[selectedFormatIndex].name === "Globe")
+                && backendSafe.isBuiltinFormat(backendSafe.formatModel[selectedFormatIndex].name)
             )
             spacing: 8 * scaleFactor
             Layout.fillWidth: true

@@ -13,6 +13,9 @@ os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 os.environ.setdefault("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Basic")
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts.warning=false")
 
+BUILTIN_FORMAT_NAMES = ("Den", "Glacier", "Globe", "Kipshoven")
+BUILTIN_FORMAT_NAME_SET = {name.lower() for name in BUILTIN_FORMAT_NAMES}
+
 def _app_base_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -171,15 +174,36 @@ def collect_xml_files_from_paths(paths, should_stop=None):
     return collected
 
 
-def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
+def _clamp_percent(value):
+    try:
+        return max(0, min(100, int(value)))
+    except Exception:
+        return 0
+
+
+def _emit_progress_safe(progress_callback, value):
+    if callable(progress_callback):
+        progress_callback(_clamp_percent(value))
+
+
+def _raise_if_cancelled(should_cancel):
+    if callable(should_cancel) and should_cancel():
+        raise RuntimeError("Operation cancelled by user.")
+
+
+def export_dataframe_to_excel(df, xml_type, save_path, xml_file, progress_callback=None, should_cancel=None):
+    _emit_progress_safe(progress_callback, 2)
+    _raise_if_cancelled(should_cancel)
     df = df.replace([float('inf'), float('-inf')], 0).fillna(0)
-    is_builtin = xml_type in ["Den", "Glacier", "Globe"]
+    is_builtin = str(xml_type).strip().lower() in BUILTIN_FORMAT_NAME_SET
     with pd.ExcelWriter(save_path, engine='xlsxwriter') as writer:
         xml_file_name = os.path.splitext(os.path.basename(xml_file))[0]
         sheet_name = ('_'.join(xml_file_name.split('_')[:-1]) if '_' in xml_file_name else xml_file_name)[:31]
         custom_start_row = int(df.attrs.get("data_start_row", 3))
         start_row = 0 if is_builtin else max(0, custom_start_row - 1)
         df.to_excel(writer, index=False, header=False, sheet_name=sheet_name, startrow=start_row)
+        _emit_progress_safe(progress_callback, 30)
+        _raise_if_cancelled(should_cancel)
         workbook = writer.book
         ws = writer.sheets[sheet_name]
 
@@ -213,7 +237,11 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 text_2 = str(header_row_2[c]) if c < len(header_row_2) and header_row_2[c] is not None else ""
                 ws.write(0, c, text_1, fmt)
                 ws.write(1, c, text_2, fmt)
+            _emit_progress_safe(progress_callback, 45)
+            _raise_if_cancelled(should_cancel)
 
+            row_count = len(df)
+            progress_granularity = max(1, row_count // 50) if row_count else 1
             for r in range(len(df)):
                 excel_r = start_row + r
                 row_highlight = False
@@ -233,10 +261,15 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                     else:
                         cell_fmt = generic_highlight_fmt if row_highlight else generic_fmt
                         ws.write(excel_r, c, val, cell_fmt)
+                if row_count and ((r + 1) % progress_granularity == 0 or r == row_count - 1):
+                    progress_value = 45 + int(((r + 1) / row_count) * 45)
+                    _emit_progress_safe(progress_callback, progress_value)
+                    _raise_if_cancelled(should_cancel)
             custom_widths = df.attrs.get("custom_widths", None)
             if isinstance(custom_widths, list):
                 for i, w in enumerate(custom_widths[:df.shape[1]]):
                     ws.set_column(i, i, float(w))
+            _emit_progress_safe(progress_callback, 98)
             return
 
         general_fmt = workbook.add_format({'num_format': 'General', 'border': 1, 'align': 'right'})
@@ -251,11 +284,15 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                 val = df.iloc[r, c]
                 if xml_type == "Globe" and c in [3, 5, 10]:
                     ws.write(r, c, val, black_header_fmt)
-                elif xml_type in ["Glacier", "Den"] and c in [3, 5, 8]:
+                elif xml_type in ["Glacier", "Den","Kipshoven"] and c in [3, 5, 8]:
                     ws.write(r, c, val, black_header_fmt)
                 else:
                     ws.write(r, c, val, header_fmt)
+        _emit_progress_safe(progress_callback, 40)
+        _raise_if_cancelled(should_cancel)
 
+        body_rows = max(0, len(df) - 2)
+        body_granularity = max(1, body_rows // 50) if body_rows else 1
         for r in range(2, len(df)):
             for c in range(df.shape[1]):
                 val = df.iloc[r, c]
@@ -295,7 +332,14 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                         ws.write(r, c, val, text_fmt)
                     else:
                         ws.write(r, c, val, num_fmt)
+            done = (r - 1)
+            if body_rows and (done % body_granularity == 0 or r == len(df) - 1):
+                progress_value = 40 + int((done / body_rows) * 35)
+                _emit_progress_safe(progress_callback, progress_value)
+                _raise_if_cancelled(should_cancel)
 
+        highlight_rows = max(0, len(df) - 2)
+        highlight_granularity = max(1, highlight_rows // 50) if highlight_rows else 1
         for r in range(2, len(df)):
             cell_value = df.iloc[r, 0]
             if isinstance(cell_value, str):
@@ -341,6 +385,11 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
                                 ws.write(r, c, val, highlight_fmt)
                 except Exception:
                     continue
+            done = (r - 1)
+            if highlight_rows and (done % highlight_granularity == 0 or r == len(df) - 1):
+                progress_value = 75 + int((done / highlight_rows) * 20)
+                _emit_progress_safe(progress_callback, progress_value)
+                _raise_if_cancelled(should_cancel)
 
         if xml_type == "Den":
             widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
@@ -356,6 +405,8 @@ def export_dataframe_to_excel(df, xml_type, save_path, xml_file):
         for col, w in hidden_cols.items():
             if col < df.shape[1]:
                 ws.set_column(col, col, w, None, {'hidden': True})
+        _emit_progress_safe(progress_callback, 98)
+    _emit_progress_safe(progress_callback, 100)
 
 
 class Worker(QObject):
@@ -370,10 +421,26 @@ class Worker(QObject):
         self.format_definition = format_definition
         self.current_file_index = 0
         self.cancel_requested = False
+        self._last_progress = -1
 
     @pyqtSlot()
     def request_cancel(self):
         self.cancel_requested = True
+
+    def _emit_progress(self, value):
+        safe_value = _clamp_percent(value)
+        if safe_value != self._last_progress:
+            self._last_progress = safe_value
+            self.progress.emit(safe_value)
+
+    def _emit_row_progress(self, current, total, start, end):
+        if total <= 0:
+            self._emit_progress(end)
+            return
+        clamped_current = max(0, min(total, int(current)))
+        span = max(0, int(end) - int(start))
+        value = int(start) + int((clamped_current / total) * span)
+        self._emit_progress(value)
 
     @pyqtSlot()
     def process(self):
@@ -382,6 +449,7 @@ class Worker(QObject):
                 self.error.emit("Operation cancelled by user.")
                 return
             xml_file = self.xml_files[self.current_file_index]
+            self._emit_progress(5)
             try:
                 df_xml = pd.read_xml(
                     xml_file,
@@ -392,7 +460,7 @@ class Worker(QObject):
                 self.error.emit(f"Error reading XML {xml_file}: {e}")
                 self.current_file_index += 1
                 continue
-            self.progress.emit(50)
+            self._emit_progress(15)
             try:
                 if self.xml_type == "Den":
                     self.process_den_from_df(df_xml, xml_file)
@@ -400,6 +468,8 @@ class Worker(QObject):
                     self.process_globe_from_df(df_xml, xml_file)
                 elif self.xml_type == "Glacier":
                     self.process_glacier_from_df(df_xml, xml_file)
+                elif self.xml_type == "Kipshoven":
+                    self.process_kipshoven_from_df(df_xml, xml_file)
                 elif self.format_definition:
                     self.process_custom_from_df(df_xml, xml_file)
                 else:
@@ -457,21 +527,24 @@ class Worker(QObject):
             header_row_1 = [""] * max_col
             header_row_2 = [""] * max_col
             final_rows = []
+            for target, col_def in enumerate(columns):
+                if 0 <= target < max_col:
+                    label_key = str(col_def.get("labelKey", "")).strip()
+                    if label_key.startswith("custom:"):
+                        header_row_1[target] = ""
+                        header_row_2[target] = label_key[7:].strip()
+                    else:
+                        preset = label_map.get(label_key)
+                        if preset:
+                            header_row_1[target] = str(preset.get("row1", ""))
+                            header_row_2[target] = str(preset.get("row2", ""))
+
+            total_rows = len(df_data)
+            progress_granularity = max(1, total_rows // 50) if total_rows else 1
             for i in range(len(df_data)):
                 row = [""] * max_col
-                                                                          
                 excel_row_num = i + 3
                 for target, col_def in enumerate(columns):
-                    if 0 <= target < max_col:
-                        label_key = str(col_def.get("labelKey", "")).strip()
-                        if label_key.startswith("custom:"):
-                            header_row_1[target] = ""
-                            header_row_2[target] = label_key[7:].strip()
-                        else:
-                            preset = label_map.get(label_key)
-                            if preset:
-                                header_row_1[target] = str(preset.get("row1", ""))
-                                header_row_2[target] = str(preset.get("row2", ""))
                     col_type = str(col_def.get("type", "empty"))
                     value = str(col_def.get("value", ""))
                     if col_type == "data":
@@ -485,6 +558,8 @@ class Worker(QObject):
                         if 0 <= target < max_col:
                             row[target] = value.replace("{r}", str(excel_row_num)).replace("{r-1}", str(max(1, excel_row_num - 1)))
                 final_rows.append(row)
+                if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
+                    self._emit_row_progress(i + 1, total_rows, 20, 84)
 
             final_df = pd.DataFrame(final_rows)
             final_df.attrs["custom_widths"] = [float(col.get("width", 14) or 14) for col in columns]
@@ -492,7 +567,7 @@ class Worker(QObject):
             final_df.attrs["custom_header_row_1"] = header_row_1
             final_df.attrs["custom_header_row_2"] = header_row_2
             final_df.attrs["data_start_row"] = 3
-            self.progress.emit(90)
+            self._emit_progress(85)
             self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"{self.xml_type} processing error: {e}")
@@ -511,17 +586,26 @@ class Worker(QObject):
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:2.8.0 [Wh]",7:"1-1:3.8.0 [varh]",9:"1-1:4.8.0 [varh]",10:"1-1:15.8.1 [Wh]",11:"1-1:13.5.0",12:"1-1:128.8.0 [Wh]"}.items(): header_den_row_1[idx]=val
             for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",8:"kVarh",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_den_row_2[idx]=val
             final_rows = [header_den_row_1, header_den_row_2]
-            for i in range(len(df_data)):
+            df_values = df_data.to_numpy(copy=False)
+            mapping_items = list(column_mapping.items())
+            total_rows = len(df_values)
+            progress_granularity = max(1, total_rows // 50) if total_rows else 1
+            for i in range(total_rows):
                 row = [""]*max_col
-                for idx,col in column_mapping.items(): row[col]=df_data.iloc[i,idx]
+                for idx,col in mapping_items:
+                    row[col]=df_values[i,idx]
                 if i>0:
                     row[3]=f"=C{i+3}*280"; row[5]=f"=(E{i+3}-E{i+2})*280/1000"; row[8]=f"=(H{i+3}-H{i+2})*280/1000"
                 final_rows.append(row)
+                if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
+                    self._emit_row_progress(i + 1, total_rows, 20, 84)
             final_df = pd.DataFrame(final_rows)
-            self.progress.emit(90)
+            self._emit_progress(85)
             self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Den processing error: {e}")
+
+            
 
     def process_globe_from_df(self, df, xml_file):
         try:
@@ -537,15 +621,20 @@ class Worker(QObject):
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:1.29.0 [Wh]",7:"1-1:2.8.0 [Wh]",8:"1-1:2.29.0 [Wh]",9:"1-1:3.8.0 [varh]",11:"1-1:3.29.0 [varh]",12:"1-1:4.8.0 [varh]",13:"1-1:4.29.0 [varh]",14:"1-1:13.5.0"}.items(): header_globe_row_1[idx]=val
             for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Energy delta over capture period 1 +A (QI+QIV)",7:"Active energy export -A (QII+QIII)",8:"Energy delta over capture period 1 -A (QII+QIII)",9:"Reactive energy import +R (QI+QII)",10:"kVarh",11:"Energy delta over capture period 1 +R (QI+QII)",12:"Reactive energy export -R (QIII+QIV)",13:"Energy delta over capture period 1 -R (QIII+QIV)",14:"Last average power factor"}.items(): header_globe_row_2[idx]=val
             final_rows = [header_globe_row_1, header_globe_row_2]
-            total_rows = len(df_data)
+            df_values = df_data.to_numpy(copy=False)
+            mapping_items = list(column_mapping.items())
+            total_rows = len(df_values)
+            progress_granularity = max(1, total_rows // 50) if total_rows else 1
             for i in range(total_rows):
                 row = [""]*max_col
-                for idx,col in column_mapping.items(): row[col]=df_data.iloc[i,idx]
+                for idx,col in mapping_items:
+                    row[col]=df_values[i,idx]
                 if i>0: row[3]=f"=C{i+3}*1400"; row[5]=f"=(E{i+3}-E{i+2})*1400/1000"; row[10]=f"=(J{i+3}-J{i+2})*1400/1000"
                 final_rows.append(row)
-                self.progress.emit(50+int((i/total_rows)*40))
+                if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
+                    self._emit_row_progress(i + 1, total_rows, 20, 84)
             final_df = pd.DataFrame(final_rows)
-            self.progress.emit(90)
+            self._emit_progress(85)
             self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Globe processing error: {e}")
@@ -564,17 +653,56 @@ class Worker(QObject):
             for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:2.8.0 [Wh]",7:"1-1:3.8.0 [varh]",9:"1-1:4.8.0 [varh]",10:"1-1:15.8.1 [Wh]",11:"1-1:13.5.0",12:"1-1:128.8.0 [Wh]"}.items(): header_row_1[idx]=val
             for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",8:"kVarh",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_row_2[idx]=val
             final_rows = [header_row_1, header_row_2]
-            for i in range(len(df_data)):
+            df_values = df_data.to_numpy(copy=False)
+            mapping_items = list(column_mapping.items())
+            total_rows = len(df_values)
+            progress_granularity = max(1, total_rows // 50) if total_rows else 1
+            for i in range(total_rows):
                 row = [""]*max_col
-                for idx,col in column_mapping.items(): row[col]=df_data.iloc[i,idx]
+                for idx,col in mapping_items:
+                    row[col]=df_values[i,idx]
                 if i>0: row[3]=f"=C{i+3}*280"; row[5]=f"=(E{i+3}-E{i+2})*280/1000"; row[8]=f"=(H{i+3}-H{i+2})*280/1000"
                 final_rows.append(row)
+                if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
+                    self._emit_row_progress(i + 1, total_rows, 20, 84)
             final_df = pd.DataFrame(final_rows)
-            self.progress.emit(90)
+            self._emit_progress(85)
             self.dataReady.emit(final_df, self.xml_type, xml_file)
         except Exception as e:
             self.error.emit(f"Glacier processing error: {e}")
 
+    def process_kipshoven_from_df(self, df, xml_file):
+        try:
+            df_filtered = df[~df.iloc[:,0].astype(str).str.contains("/ArrayFieldDataSet", na=False)].reset_index(drop=True)
+            if df_filtered.empty:
+                self.error.emit("No valid rows found in Kipshoven XML.")
+                return
+            df_data = df_filtered.iloc[:,1:12]
+            column_mapping = {0:0,1:1,2:2,3:4,4:6,5:7,6:9,7:10,8:11,9:12}
+            max_col = max(column_mapping.values())+1
+            header_den_row_1 = [""]*max_col
+            header_den_row_2 = [""]*max_col
+            for idx,val in {0:"0-0:1.0.0",1:"0-0:96.240.12 [hex]",2:"1-1:1.5.0 [kW]",4:"1-1:1.8.0 [Wh]",6:"1-1:2.8.0 [Wh]",7:"1-1:3.8.0 [varh]",9:"1-1:4.8.0 [varh]",10:"1-1:15.8.1 [Wh]",11:"1-1:13.5.0",12:"1-1:128.8.0 [Wh]"}.items(): header_den_row_1[idx]=val
+            for idx,val in {0:"Clock",1:"EDIS status",2:"Last average demand +A (QI+QIV)",3:"Demand",4:"Active energy import +A (QI+QIV)",5:"kWh",6:"Active energy export -A (QII+QIII)",7:"Reactive energy import +R (QI+QII)",8:"kVarh",9:"Reactive energy export -R (QIII+QIV)",10:"Active energy A (QI+QII+QIII+QIV) rate 1",11:"Last average power factor",12:"Energy |AL1|+|AL2|+|AL3|"}.items(): header_den_row_2[idx]=val
+            final_rows = [header_den_row_1, header_den_row_2]
+            df_values = df_data.to_numpy(copy=False)
+            mapping_items = list(column_mapping.items())
+            total_rows = len(df_values)
+            progress_granularity = max(1, total_rows // 50) if total_rows else 1
+            for i in range(total_rows):
+                row = [""]*max_col
+                for idx,col in mapping_items:
+                    row[col]=df_values[i,idx]
+                if i>0:
+                    row[3]=f"=C{i+3}*380"; row[5]=f"=(E{i+3}-E{i+2})*380/1000"; row[8]=f"=(H{i+3}-H{i+2})*380/1000"
+                final_rows.append(row)
+                if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
+                    self._emit_row_progress(i + 1, total_rows, 20, 84)
+            final_df = pd.DataFrame(final_rows)
+            self._emit_progress(85)
+            self.dataReady.emit(final_df, self.xml_type, xml_file)
+        except Exception as e:
+            self.error.emit(f"Kipshoven processing error: {e}")
 
 class PathDiscoveryWorker(QObject):
     finished = pyqtSignal(object)
@@ -612,10 +740,18 @@ class SaveWorker(QObject):
         self.save_path = save_path
         self.xml_file = xml_file
         self.cancel_requested = False
+        self._last_stage_progress = -1
 
     @pyqtSlot()
     def request_cancel(self):
         self.cancel_requested = True
+
+    def _emit_save_stage_progress(self, export_progress):
+        safe_export = _clamp_percent(export_progress)
+        stage_progress = 86 + int((safe_export / 100) * 14)
+        if stage_progress != self._last_stage_progress:
+            self._last_stage_progress = stage_progress
+            self.progress.emit(stage_progress)
 
     @pyqtSlot()
     def save(self):
@@ -623,10 +759,25 @@ class SaveWorker(QObject):
             if self.cancel_requested:
                 self.error.emit("Operation cancelled by user.")
                 return
-            self.progress.emit(90)
-            export_dataframe_to_excel(self.df, self.xml_type, self.save_path, self.xml_file)
+            self._emit_save_stage_progress(0)
+            export_dataframe_to_excel(
+                self.df,
+                self.xml_type,
+                self.save_path,
+                self.xml_file,
+                progress_callback=self._emit_save_stage_progress,
+                should_cancel=lambda: self.cancel_requested
+            )
+            if self.cancel_requested:
+                self.error.emit("Operation cancelled by user.")
+                return
             self.progress.emit(100)
             self.saved.emit(self.save_path, self.xml_file)
+        except RuntimeError as e:
+            if str(e) == "Operation cancelled by user.":
+                self.error.emit("Operation cancelled by user.")
+                return
+            self.error.emit(f"Failed to save Excel: {e}")
         except PermissionError as e:
             self.error.emit(f"PERMISSION_DENIED::{self.save_path}::{e}")
         except Exception as e:
@@ -645,10 +796,17 @@ class BatchSaveWorker(QObject):
         self.batch_results = batch_results
         self.batch_outputs = [dict(item) for item in batch_outputs]
         self.cancel_requested = False
+        self._last_progress = -1
 
     @pyqtSlot()
     def request_cancel(self):
         self.cancel_requested = True
+
+    def _emit_progress(self, value):
+        safe_value = _clamp_percent(value)
+        if safe_value != self._last_progress:
+            self._last_progress = safe_value
+            self.progress.emit(safe_value)
 
     @pyqtSlot()
     def save_all(self):
@@ -665,14 +823,31 @@ class BatchSaveWorker(QObject):
                 output = self.batch_outputs[i]
                 save_path = os.path.join(output["saveDir"], ensure_xlsx_extension(output["fileName"]))
                 try:
-                    export_dataframe_to_excel(result["df"], result["xml_type"], save_path, result["xml_file"])
+                    def file_progress_callback(file_progress, file_index=i, total_files=total):
+                        overall = int(((file_index + (_clamp_percent(file_progress) / 100.0)) / total_files) * 100)
+                        self._emit_progress(overall)
+
+                    export_dataframe_to_excel(
+                        result["df"],
+                        result["xml_type"],
+                        save_path,
+                        result["xml_file"],
+                        progress_callback=file_progress_callback,
+                        should_cancel=lambda: self.cancel_requested
+                    )
                 except PermissionError as e:
                     self.error.emit(f"BATCH_PERMISSION_DENIED::{i}::{save_path}::{e}")
+                    return
+                except RuntimeError as e:
+                    if str(e) == "Operation cancelled by user.":
+                        self.error.emit("Operation cancelled by user.")
+                        return
+                    self.error.emit(f"Failed to save batch files: {e}")
                     return
                 self.batch_outputs[i]["savePath"] = save_path
                 self.batch_outputs[i]["fileName"] = os.path.basename(save_path)
                 self.saveCountUpdated.emit(i + 1)
-                self.progress.emit(int(((i + 1) / total) * 100))
+                self._emit_progress(int(((i + 1) / total) * 100))
 
             self.finished.emit(self.batch_outputs)
         except Exception as e:
@@ -874,6 +1049,12 @@ class Backend(QObject):
         }
         den_widths = [17.73, 17.27] + [16.27] * 7 + [32.27, 36.36, 23.36, 24.76]
 
+        glacier_mapping = den_mapping
+        glacier_formulas = den_formulas
+        glacier_label_keys = den_label_keys
+        glacier_widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
+
+
         globe_mapping = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 7, 6: 8, 7: 9, 8: 11, 9: 12, 10: 13, 11: 14}
         globe_formulas = {
             3: "=C{r}*1400",
@@ -899,15 +1080,20 @@ class Backend(QObject):
         }
         globe_widths = [17.73, 17.27] + [14.91] * 9 + [41.91, 33.27, 43.36, 23.36]
 
-        glacier_mapping = den_mapping
-        glacier_formulas = den_formulas
-        glacier_label_keys = den_label_keys
-        glacier_widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
+        kipshoven_mapping = den_mapping
+        kipshoven_formulas = {
+            3: "=C{r}*350",
+            5: "=(E{r}-E{r-1})*350/1000",
+            10: "=(J{r}-J{r-1})*350/1000",
+        }
+        kipshoven_label_keys = den_label_keys
+        kipshoven_widths = [17.73, 17.27] + [16.91] * 7 + [18.73, 17.55, 23.36, 23.36]
 
         return [
             {"name": "Den", "columns": self._build_columns_from_spec(13, den_mapping, den_formulas, den_widths, den_label_keys)},
             {"name": "Glacier", "columns": self._build_columns_from_spec(13, glacier_mapping, glacier_formulas, glacier_widths, glacier_label_keys)},
             {"name": "Globe", "columns": self._build_columns_from_spec(15, globe_mapping, globe_formulas, globe_widths, globe_label_keys)},
+            {"name": "Kipshoven", "columns": self._build_columns_from_spec(13, kipshoven_mapping, kipshoven_formulas, kipshoven_widths, kipshoven_label_keys)}
         ]
 
     def _builtin_default_columns_map(self):
@@ -1021,17 +1207,18 @@ class Backend(QObject):
     def _load_or_default_formats(self):
         self._ensure_formats_storage_writable()
         os.makedirs(self.formats_dir, exist_ok=True)
-        base_formats = []
+        bundled_formats = []
+        stored_formats = []
         if os.path.exists(self.formats_path):
             try:
                 with open(self.formats_path, "r", encoding="utf-8") as fp:
                     loaded = json.load(fp)
                 parsed = self._normalize_loaded_formats(loaded)
                 if parsed:
-                    base_formats = parsed
+                    stored_formats = parsed
             except Exception:
                 pass
-        if not base_formats:
+        if not stored_formats:
             bundled_formats_path = os.path.join(RESOURCE_BASE_DIR, "formats", "format_model.json")
             if os.path.exists(bundled_formats_path):
                 try:
@@ -1039,13 +1226,14 @@ class Backend(QObject):
                         loaded = json.load(fp)
                     parsed = self._normalize_loaded_formats(loaded)
                     if parsed:
-                        base_formats = parsed
+                        bundled_formats = parsed
                 except Exception:
                     pass
-        if not base_formats:
-            base_formats = self._default_formats()
+        builtin_formats = self._default_formats()
+        persisted_formats = stored_formats if stored_formats else bundled_formats
+        merged = self._merge_format_entries(builtin_formats, persisted_formats)
         sidecars = self._load_sidecar_formats()
-        return self._merge_format_entries(base_formats, sidecars)
+        return self._merge_format_entries(merged, sidecars)
 
     def _refresh_xml_type_options(self, emit_signal=True):
         self.xml_type_options = [fmt.get("name", "") for fmt in self.format_model if fmt.get("name", "")]
@@ -1128,7 +1316,11 @@ class Backend(QObject):
         columns.sort(key=lambda row: excel_col_to_index(self._normalize_column_label((row or {}).get("col", "A"))))
 
     def _is_builtin_format_name(self, name):
-        return str(name).strip().lower() in ("den", "glacier", "globe")
+        return str(name).strip().lower() in BUILTIN_FORMAT_NAME_SET
+
+    @pyqtSlot(str, result=bool)
+    def isBuiltinFormat(self, name):
+        return self._is_builtin_format_name(name)
 
     def _only_builtin_formats_left(self):
         if not self.format_model:
@@ -1678,7 +1870,9 @@ class Backend(QObject):
         fmt = self.format_model[index]
         format_name = fmt.get("name", "")
         if self._is_builtin_format_name(format_name):
-            self._set_format_designer_status("Failed to delete: Den, Glacier, and Globe are built-in formats.")
+            self._set_format_designer_status(
+                f"Failed to delete: {', '.join(BUILTIN_FORMAT_NAMES)} are built-in formats."
+            )
             return
         alias_names = []
         raw_aliases = fmt.get("__aliases", [])
@@ -2092,7 +2286,7 @@ class Backend(QObject):
         selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
         self.worker = Worker([self.selected_files[self.current_batch_index]], self.xml_type, selected_format)
         self.worker.moveToThread(self.thread)
-        self.worker.progress.connect(self.progressUpdated)
+        self.worker.progress.connect(self.handleWorkerProgress)
         self.worker.error.connect(self.handleError)
         if self.is_batch:
             self.worker.dataReady.connect(self.collectBatchResult)
@@ -2203,7 +2397,7 @@ class Backend(QObject):
         selected_format = next((fmt for fmt in self.format_model if fmt.get("name", "") == self.xml_type), None)
         self.worker = Worker([self.selected_file], self.xml_type, selected_format)
         self.worker.moveToThread(self.thread)
-        self.worker.progress.connect(self.progressUpdated)
+        self.worker.progress.connect(self.handleWorkerProgress)
         self.worker.error.connect(self.handleError)
         self.worker.dataReady.connect(self.saveFile)
         self.thread.started.connect(self.worker.process)
@@ -2294,6 +2488,17 @@ class Backend(QObject):
         if self.root:
             self.root.setProperty("progress",value)
 
+    @pyqtSlot(int)
+    def handleWorkerProgress(self, value):
+        safe_value = _clamp_percent(value)
+        if self.is_batch and self.selected_files and self.root and self.root.property("processState") == "converting":
+            total_files = len(self.selected_files)
+            file_index = max(0, min(self.current_batch_index, total_files - 1))
+            overall = int(((file_index + (safe_value / 100.0)) / total_files) * 100)
+            self.progressUpdated.emit(_clamp_percent(overall))
+            return
+        self.progressUpdated.emit(safe_value)
+
     def handleError(self,msg):
         if msg == "Operation cancelled by user.":
             self._stop_thread("thread", "worker")
@@ -2310,6 +2515,10 @@ class Backend(QObject):
                 self.refreshBatchFileStatusesProperty()
             self._stop_thread("thread", "worker")
             self.current_batch_index += 1
+            if self.selected_files:
+                completed = min(self.current_batch_index, len(self.selected_files))
+                overall = int((completed / len(self.selected_files)) * 100)
+                self.progressUpdated.emit(_clamp_percent(overall))
             if self.root:
                 self.root.setProperty("currentBatchIndex", self.current_batch_index)
             if self.current_batch_index < len(self.selected_files):
@@ -2351,6 +2560,10 @@ class Backend(QObject):
         self._stop_thread("thread", "worker")
 
         self.current_batch_index += 1
+        if self.selected_files:
+            completed = min(self.current_batch_index, len(self.selected_files))
+            overall = int((completed / len(self.selected_files)) * 100)
+            self.progressUpdated.emit(_clamp_percent(overall))
         if self.root:
             self.root.setProperty("currentBatchIndex", self.current_batch_index)
         if self.current_batch_index < len(self.selected_files):
@@ -2614,7 +2827,7 @@ class Backend(QObject):
         self._stop_thread("thread", "worker")
 
     def _start_single_save_thread(self, df, xml_type, save_path, xml_file):
-        self.progressUpdated.emit(90)
+        self.progressUpdated.emit(86)
         self._stop_thread("save_thread", "save_worker")
         self.save_thread = QThread()
         self.save_worker = SaveWorker(df, xml_type, save_path, xml_file)
