@@ -694,7 +694,7 @@ class Worker(QObject):
                 for idx,col in mapping_items:
                     row[col]=df_values[i,idx]
                 if i>0:
-                    row[3]=f"=C{i+3}*380"; row[5]=f"=(E{i+3}-E{i+2})*380/1000"; row[8]=f"=(H{i+3}-H{i+2})*380/1000"
+                    row[3]=f"=C{i+3}*350"; row[5]=f"=(E{i+3}-E{i+2})*350/1000"; row[8]=f"=(H{i+3}-H{i+2})*350/1000"
                 final_rows.append(row)
                 if total_rows and ((i + 1) % progress_granularity == 0 or i == total_rows - 1):
                     self._emit_row_progress(i + 1, total_rows, 20, 84)
